@@ -10,7 +10,6 @@
     <main class="app">
       <header class="hero">
         <h1>Log Mini Tool</h1>
-        <p>Import logs, search fast, and pretty-print JSON fragments.</p>
       </header>
 
       <section class="controls card">
@@ -39,36 +38,37 @@
           <button id="clearBtn" class="btn ghost">Clear</button>
         </div>
 
-        <div class="search-row">
-          <label class="muted" for="levelFilter">Level</label>
-          <select id="levelFilter" aria-label="Log level filter">
-            <option value="all">All</option>
-            <option value="INFO">INFO</option>
-            <option value="WARN">WARN</option>
-            <option value="ERROR">ERROR</option>
-          </select>
-
-          <label class="muted" for="pageSize">Page size</label>
-          <select id="pageSize" aria-label="Page size">
-            <option value="50">50</option>
-            <option value="100" selected>100</option>
-            <option value="250">250</option>
-            <option value="500">500</option>
-          </select>
-
-          <button id="exportTxtBtn" class="btn">Export TXT</button>
-          <button id="exportJsonBtn" class="btn ghost">Export JSON</button>
-        </div>
-
+        
         <div class="hint muted">
-          Tip: if query is wrapped with quotes like <code>"timeout error"</code>, exact mode is used automatically. Regex examples: <code>ERROR|WARN</code>, <code>timeout\\s+\d+</code>.
+            Tip: if query is wrapped with quotes like <code>"timeout error"</code>, exact mode is used automatically. Regex examples: <code>ERROR|WARN</code>, <code>timeout\\s+\d+</code>.
         </div>
-      </section>
-
-      <section class="results card">
+    </section>
+    
+    <section class="results card">
         <div class="results-head">
-          <h2>Matches</h2>
-          <span id="resultCount" class="pill">0</span>
+            <h2>Matches</h2>
+            <span id="resultCount" class="pill">0</span>
+
+            <div class="search-row result-control-row">
+              <label class="muted" for="levelFilter">Level</label>
+              <select id="levelFilter" aria-label="Log level filter">
+                <option value="all">All</option>
+                <option value="INFO">INFO</option>
+                <option value="WARN">WARN</option>
+                <option value="ERROR">ERROR</option>
+              </select>
+        
+              <label class="muted" for="pageSize">Page size</label>
+              <select id="pageSize" aria-label="Page size">
+                <option value="50">50</option>
+                <option value="100" selected>100</option>
+                <option value="250">250</option>
+                <option value="500">500</option>
+              </select>
+        
+              <button id="exportTxtBtn" class="btn">Export TXT</button>
+              <button id="exportJsonBtn" class="btn ghost">Export JSON</button>
+            </div>
         </div>
         <div id="resultList" class="list" aria-live="polite"></div>
         <div class="pagination-row">
