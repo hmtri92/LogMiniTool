@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Log Mini Tool</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="hero">
+        <h1>Log Mini Tool</h1>
+        <p>Import logs, search fast, and pretty-print JSON fragments.</p>
+      </header>
+
+      <section class="controls card">
+        <div class="file-row">
+          <button id="importBtn" class="btn" type="button">Import Log File</button>
+          <input id="fileInput" class="visually-hidden-input" type="file" accept=".log,.txt,.json,.ndjson" />
+          <span id="fileMeta" class="muted">No file loaded</span>
+        </div>
+
+        <div class="search-row">
+          <input
+            id="searchInput"
+            type="text"
+            placeholder='Search: hello OR "exact phrase"'
+          />
+          <label class="muted" for="startTime">From</label>
+          <input id="startTime" type="datetime-local" />
+          <label class="muted" for="endTime">To</label>
+          <input id="endTime" type="datetime-local" />
+          <select id="searchMode" aria-label="Search mode">
+            <option value="include">Include</option>
+            <option value="exact">Exact</option>
+            <option value="regex">Regex</option>
+          </select>
+          <button id="searchBtn" class="btn">Search</button>
+          <button id="clearBtn" class="btn ghost">Clear</button>
+        </div>
+
+        <div class="search-row">
+          <label class="muted" for="levelFilter">Level</label>
+          <select id="levelFilter" aria-label="Log level filter">
+            <option value="all">All</option>
+            <option value="INFO">INFO</option>
+            <option value="WARN">WARN</option>
+            <option value="ERROR">ERROR</option>
+          </select>
+
+          <label class="muted" for="pageSize">Page size</label>
+          <select id="pageSize" aria-label="Page size">
+            <option value="50">50</option>
+            <option value="100" selected>100</option>
+            <option value="250">250</option>
+            <option value="500">500</option>
+          </select>
+
+          <button id="exportTxtBtn" class="btn">Export TXT</button>
+          <button id="exportJsonBtn" class="btn ghost">Export JSON</button>
+        </div>
+
+        <div class="hint muted">
+          Tip: if query is wrapped with quotes like <code>"timeout error"</code>, exact mode is used automatically. Regex examples: <code>ERROR|WARN</code>, <code>timeout\\s+\d+</code>.
+        </div>
+      </section>
+
+      <section class="results card">
+        <div class="results-head">
+          <h2>Matches</h2>
+          <span id="resultCount" class="pill">0</span>
+        </div>
+        <div id="resultList" class="list" aria-live="polite"></div>
+        <div class="pagination-row">
+          <button id="prevPageBtn" class="btn ghost" type="button">Prev</button>
+          <span id="pageInfo" class="muted">Page 1 / 1</span>
+          <button id="nextPageBtn" class="btn ghost" type="button">Next</button>
+        </div>
+      </section>
+
+      <section class="json card">
+        <div class="results-head">
+          <h2>Pretty JSON</h2>
+        </div>
+        <pre id="jsonView" class="json-view">Select a matched line to parse JSON.</pre>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>
