@@ -25,6 +25,7 @@ let currentQuery = buildQuerySpec("", "include");
 let currentMode = "include";
 let currentRegex = null;
 let currentFileBaseName = "log";
+let selectedLineIndex = null;
 
 if (importBtn && fileInput) {
   importBtn.addEventListener("click", () => {
@@ -63,6 +64,7 @@ async function handleFileSelection(event) {
   try {
     allLines = text.split(/\r?\n/);
     currentFileBaseName = (file.name || "log").replace(/\.[^.]+$/, "") || "log";
+    selectedLineIndex = null;
     fileMeta.textContent = `${file.name} | ${allLines.length.toLocaleString()} lines`;
     runSearch();
   } catch (error) {
@@ -216,6 +218,7 @@ function renderResults(items, query, mode, regex) {
   resultCount.textContent = String(matchedItems.length);
 
   if (!items.length) {
+    selectedLineIndex = null;
     const empty = document.createElement("div");
     empty.className = "row";
     empty.innerHTML = '<div class="line-text">No matches found.</div>';
@@ -256,6 +259,9 @@ function renderResults(items, query, mode, regex) {
     const row = document.createElement("button");
     row.className = "row";
     row.type = "button";
+    if (selectedLineIndex === index) {
+      row.classList.add("selected-row");
+    }
 
     const lineNo = document.createElement("div");
     lineNo.className = "line-no";
@@ -279,7 +285,9 @@ function renderResults(items, query, mode, regex) {
     row.appendChild(text);
 
     row.addEventListener("click", () => {
+      selectedLineIndex = index;
       jsonView.textContent = prettyJsonFromLine(line);
+      renderCurrentPage();
     });
 
     fragment.appendChild(row);
