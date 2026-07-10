@@ -41,6 +41,71 @@ if (fileInput) {
   fileInput.addEventListener("input", handleFileSelection);
 }
 
+function parseCsv(text) {
+  const lines = [];
+  const rows = parseSimpleCsv(text);
+  if (!rows.length) return { lines };
+
+  const headers = rows[0];
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    const record = {};
+    for (let j = 0; j < headers.length; j++) {
+      record[headers[j]] = row[j] || "";
+    }
+    const logField = record.log || record.message || record.content || "";
+    const line = `${logField}|${JSON.stringify(record).slice(0, 2000)}`;
+    lines.push(line);
+  }
+
+  return { lines };
+}
+
+function parseSimpleCsv(text) {
+  const rows = [];
+  let currentRow = [];
+  let currentField = "";
+  let insideQuotes = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const nextChar = text[i + 1];
+
+    if (char === '"') {
+      if (insideQuotes && nextChar === '"') {
+        currentField += '"';
+        i++;
+      } else {
+        insideQuotes = !insideQuotes;
+      }
+    } else if (char === "," && !insideQuotes) {
+      currentRow.push(currentField);
+      currentField = "";
+    } else if ((char === "\n" || char === "\r") && !insideQuotes) {
+      if (currentField || currentRow.length > 0) {
+        currentRow.push(currentField);
+        if (currentRow.some((f) => f.trim())) {
+          rows.push(currentRow);
+        }
+        currentRow = [];
+        currentField = "";
+      }
+      if (char === "\r" && nextChar === "\n") i++;
+    } else {
+      currentField += char;
+    }
+  }
+
+  if (currentField || currentRow.length > 0) {
+    currentRow.push(currentField);
+    if (currentRow.some((f) => f.trim())) {
+      rows.push(currentRow);
+    }
+  }
+
+  return rows.map((row) => row.map((field) => field.trim()));
+}
+
 async function handleFileSelection(event) {
   const file = event.target?.files?.[0];
   if (!file) return;
@@ -62,7 +127,13 @@ async function handleFileSelection(event) {
   }
 
   try {
-    allLines = text.split(/\r?\n/);
+    const isCsv = file.name.toLowerCase().endsWith(".csv");
+    if (isCsv) {
+      const csv = parseCsv(text);
+      allLines = csv.lines;
+    } else {
+      allLines = text.split(/\r?\n/);
+    }
     currentFileBaseName = (file.name || "log").replace(/\.[^.]+$/, "") || "log";
     selectedLineIndex = null;
     fileMeta.textContent = `${file.name} | ${allLines.length.toLocaleString()} lines`;
