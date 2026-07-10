@@ -318,10 +318,15 @@ function renderResults(items, query, mode, regex) {
   messageHeader.className = "line-text";
   messageHeader.textContent = "Message";
 
+  const actionHeader = document.createElement("div");
+  actionHeader.className = "line-action";
+  actionHeader.textContent = "Action";
+
   headerRow.appendChild(lineHeader);
   headerRow.appendChild(atTimestampHeader);
   headerRow.appendChild(timestampHeader);
   headerRow.appendChild(messageHeader);
+  headerRow.appendChild(actionHeader);
   fragment.appendChild(headerRow);
 
   items.forEach(({ line, index }) => {
@@ -350,12 +355,30 @@ function renderResults(items, query, mode, regex) {
     text.className = "line-text";
     text.innerHTML = highlight(line, query, mode, regex);
 
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "btn ghost row-copy-btn";
+    copyBtn.type = "button";
+    copyBtn.textContent = "Copy";
+    copyBtn.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      const copied = await copyTextToClipboard(line);
+      const originalLabel = copyBtn.textContent;
+      copyBtn.textContent = copied ? "Copied" : "Copy failed";
+      window.setTimeout(() => {
+        copyBtn.textContent = originalLabel;
+      }, 1200);
+    });
+
     row.appendChild(lineNo);
     row.appendChild(atTimestamp);
     row.appendChild(timestamp);
     row.appendChild(text);
+    row.appendChild(copyBtn);
 
     row.addEventListener("click", () => {
+      if (hasActiveTextSelection()) {
+        return;
+      }
       selectedLineIndex = index;
       jsonView.textContent = prettyJsonFromLine(line);
       renderCurrentPage();
@@ -775,4 +798,40 @@ function downloadBlob(content, mimeType, filename) {
   link.download = filename;
   link.click();
   URL.revokeObjectURL(url);
+}
+
+async function copyTextToClipboard(text) {
+  const value = String(text ?? "");
+
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(value);
+      return true;
+    } catch {
+      // Fall back for environments where clipboard permissions are restricted.
+    }
+  }
+
+  const ta = document.createElement("textarea");
+  ta.value = value;
+  ta.setAttribute("readonly", "true");
+  ta.style.position = "fixed";
+  ta.style.left = "-9999px";
+  document.body.appendChild(ta);
+  ta.select();
+
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch {
+    copied = false;
+  }
+
+  document.body.removeChild(ta);
+  return copied;
+}
+
+function hasActiveTextSelection() {
+  const selection = window.getSelection();
+  return Boolean(selection && selection.toString().trim().length > 0);
 }
