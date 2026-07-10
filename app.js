@@ -17,6 +17,7 @@ const prevPageBtn = document.getElementById("prevPageBtn");
 const nextPageBtn = document.getElementById("nextPageBtn");
 const pageInfo = document.getElementById("pageInfo");
 const jsonView = document.getElementById("jsonView");
+const copyPrettyJsonBtn = document.getElementById("copyPrettyJsonBtn");
 
 let allLines = [];
 let matchedItems = [];
@@ -165,6 +166,19 @@ clearBtn.addEventListener("click", () => {
 
 exportTxtBtn.addEventListener("click", () => exportMatches("txt"));
 exportJsonBtn.addEventListener("click", () => exportMatches("json"));
+
+if (copyPrettyJsonBtn) {
+  copyPrettyJsonBtn.addEventListener("click", async () => {
+    const text = String(jsonView?.textContent || "").trim();
+    const hasJson = text && text !== "Select a matched line to parse JSON." && text !== "No valid JSON found in this line.";
+    const copied = hasJson ? await copyTextToClipboard(text) : false;
+    const originalLabel = copyPrettyJsonBtn.textContent;
+    copyPrettyJsonBtn.textContent = copied ? "Copied" : "No JSON";
+    window.setTimeout(() => {
+      copyPrettyJsonBtn.textContent = originalLabel;
+    }, 1200);
+  });
+}
 
 prevPageBtn.addEventListener("click", () => {
   if (currentPage <= 1) return;
@@ -809,11 +823,69 @@ function parseJsonCandidate(candidate) {
 
   try {
     const parsed = JSON.parse(text);
-    if (typeof parsed === "string") {
-      const nested = parseJsonCandidate(parsed);
-      return nested ?? parsed;
+    return normalizeParsedJsonValue(parsed);
+  } catch {
+    // Try escaped-json recovery next.
+  }
+
+  const escapedNormalized = normalizeEscapedJsonText(text);
+  if (escapedNormalized !== text) {
+    try {
+      return normalizeParsedJsonValue(JSON.parse(escapedNormalized));
+    } catch {
+      // Ignore and fall through.
     }
-    return parsed;
+  }
+
+  return null;
+}
+
+function normalizeParsedJsonValue(value) {
+  if (typeof value === "string") {
+    const nested = tryParseNestedJsonString(value);
+    return nested ?? value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeParsedJsonValue(item));
+  }
+
+  if (value && typeof value === "object") {
+    const normalized = {};
+    for (const [key, entry] of Object.entries(value)) {
+      normalized[key] = normalizeParsedJsonValue(entry);
+    }
+    return normalized;
+  }
+
+  return value;
+}
+
+function tryParseNestedJsonString(value) {
+  const text = String(value || "").trim();
+  if (!text) return null;
+
+  const candidates = buildJsonCandidates(text);
+  for (const candidate of candidates) {
+    const isSameText = candidate === text;
+    const looksJsonLike = /^[\[{]/.test(candidate) || candidate.includes("):") || /(?:request|response)Body:/i.test(candidate);
+    if (!isSameText || looksJsonLike) {
+      const parsed = parseJsonCandidateShallow(candidate);
+      if (parsed !== null) {
+        return normalizeParsedJsonValue(parsed);
+      }
+    }
+  }
+
+  return null;
+}
+
+function parseJsonCandidateShallow(candidate) {
+  const text = String(candidate || "").trim();
+  if (!text) return null;
+
+  try {
+    return JSON.parse(text);
   } catch {
     // Try escaped-json recovery next.
   }
