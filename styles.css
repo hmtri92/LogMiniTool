@@ -155,7 +155,7 @@ select {
   grid-template-columns: var(--col-line) var(--col-at) var(--col-ts) minmax(
       0,
       1fr
-    );
+    ) auto;
   gap: 0.6rem;
   padding: 0.55rem 0.7rem;
   border-bottom: 1px solid #ece6da;
@@ -233,6 +233,22 @@ select {
   overflow-wrap: anywhere;
   font-family: 'SF Mono', Menlo, Consolas, monospace;
   font-size: 0.88rem;
+  user-select: text;
+  cursor: text;
+}
+
+.line-action {
+  font-size: 0.86rem;
+  color: var(--soft);
+  justify-self: end;
+}
+
+.row-copy-btn {
+  justify-self: end;
+  align-self: start;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.8rem;
+  border-radius: 8px;
 }
 
 mark {
