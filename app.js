@@ -54,7 +54,7 @@ function parseCsv(text) {
       record[headers[j]] = row[j] || "";
     }
     const logField = record.log || record.message || record.content || "";
-    const line = `${logField}|${JSON.stringify(record).slice(0, 2000)}`;
+    const line = `${logField}|${JSON.stringify(record)}`;
     lines.push(line);
   }
 
@@ -522,6 +522,18 @@ function linePassesTimeFilter(line, fromMs, toMs) {
 }
 
 function extractTimestampForFilter(line) {
+  const embeddedAtTimestamp = extractNamedTimestampValue(line, "@timestamp");
+  if (embeddedAtTimestamp) {
+    const fromEmbeddedAt = parseLocalWallClockMillis(embeddedAtTimestamp);
+    if (fromEmbeddedAt !== null) return fromEmbeddedAt;
+  }
+
+  const embeddedTimestamp = extractNamedTimestampValue(line, "timestamp");
+  if (embeddedTimestamp) {
+    const fromEmbeddedTs = parseLocalWallClockMillis(embeddedTimestamp);
+    if (fromEmbeddedTs !== null) return fromEmbeddedTs;
+  }
+
   const columns = extractTimestampColumns(line);
 
   if (columns.atTimestamp) {
@@ -538,6 +550,23 @@ function extractTimestampForFilter(line) {
   if (fromLine !== null) return fromLine;
 
   return extractTimestamp(line);
+}
+
+function extractNamedTimestampValue(line, fieldName) {
+  const escaped = fieldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const patterns = [
+    new RegExp(`"${escaped}"\\s*:\\s*"([^"]+)"`, "i"),
+    new RegExp(`\\"${escaped}\\"\\s*:\\s*\\"([^\\"]+)\\"`, "i")
+  ];
+
+  for (const pattern of patterns) {
+    const match = String(line || "").match(pattern);
+    if (match?.[1]) {
+      return match[1];
+    }
+  }
+
+  return null;
 }
 
 function parseLocalWallClockMillis(value) {
@@ -723,30 +752,131 @@ function parseTimestampTextToMillis(value) {
 }
 
 function prettyJsonFromLine(line) {
-  const candidates = [];
-
-  candidates.push(line.trim());
-
-  const jsonObjectStart = line.indexOf("{");
-  if (jsonObjectStart >= 0) {
-    candidates.push(line.slice(jsonObjectStart).trim());
-  }
-
-  const jsonArrayStart = line.indexOf("[");
-  if (jsonArrayStart >= 0) {
-    candidates.push(line.slice(jsonArrayStart).trim());
-  }
+  const candidates = buildJsonCandidates(line);
 
   for (const candidate of candidates) {
-    try {
-      const parsed = JSON.parse(candidate);
+    const parsed = parseJsonCandidate(candidate);
+    if (parsed !== null) {
       return JSON.stringify(parsed, null, 2);
-    } catch {
-      // Try next candidate.
     }
   }
 
   return "No valid JSON found in this line.";
+}
+
+function buildJsonCandidates(line) {
+  const text = String(line || "").trim();
+  const candidates = [text];
+
+  const markers = ["):", "RequestBody:", "requestBody:", "responseBody:", "payload:"];
+  for (const marker of markers) {
+    const markerIndex = text.indexOf(marker);
+    if (markerIndex >= 0) {
+      const afterMarker = text.slice(markerIndex + marker.length).trim();
+      if (afterMarker) {
+        candidates.push(afterMarker);
+        const extracted = extractLeadingJsonFragment(afterMarker);
+        if (extracted) candidates.push(extracted);
+      }
+    }
+  }
+
+  const objectStart = text.indexOf("{");
+  if (objectStart >= 0) {
+    candidates.push(text.slice(objectStart).trim());
+    const extracted = extractLeadingJsonFragment(text.slice(objectStart));
+    if (extracted) candidates.push(extracted);
+  }
+
+  const escapedObjectStart = text.indexOf('{\\"');
+  if (escapedObjectStart >= 0) {
+    candidates.push(text.slice(escapedObjectStart).trim());
+  }
+
+  const arrayStart = text.indexOf("[");
+  if (arrayStart >= 0) {
+    candidates.push(text.slice(arrayStart).trim());
+    const extracted = extractLeadingJsonFragment(text.slice(arrayStart));
+    if (extracted) candidates.push(extracted);
+  }
+
+  return [...new Set(candidates.filter(Boolean))];
+}
+
+function parseJsonCandidate(candidate) {
+  const text = String(candidate || "").trim();
+  if (!text) return null;
+
+  try {
+    const parsed = JSON.parse(text);
+    if (typeof parsed === "string") {
+      const nested = parseJsonCandidate(parsed);
+      return nested ?? parsed;
+    }
+    return parsed;
+  } catch {
+    // Try escaped-json recovery next.
+  }
+
+  const escapedNormalized = normalizeEscapedJsonText(text);
+  if (escapedNormalized !== text) {
+    try {
+      return JSON.parse(escapedNormalized);
+    } catch {
+      // Ignore and fall through.
+    }
+  }
+
+  return null;
+}
+
+function normalizeEscapedJsonText(value) {
+  return String(value || "")
+    .replace(/^"(.*)"$/, "$1")
+    .replaceAll('\\"', '"');
+}
+
+function extractLeadingJsonFragment(value) {
+  const text = String(value || "");
+  const start = text.search(/[\[{]/);
+  if (start < 0) return null;
+
+  const openChar = text[start];
+  const closeChar = openChar === "{" ? "}" : "]";
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) continue;
+
+    if (ch === openChar) depth += 1;
+    if (ch === closeChar) {
+      depth -= 1;
+      if (depth === 0) {
+        return text.slice(start, i + 1).trim();
+      }
+    }
+  }
+
+  return null;
 }
 
 function escapeHtml(value) {

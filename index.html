@@ -3,16 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Log Mini Tool</title>
+    <title>Search Log</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <main class="app">
       <header class="hero">
-        <h1>Log Mini Tool</h1>
+        <h1>Search Log</h1>
       </header>
 
-      <section class="controls card">
+      <section class="controls results card">
         <div class="file-row">
           <button id="importBtn" class="btn" type="button">Import Log File</button>
           <input id="fileInput" class="visually-hidden-input" type="file" accept=".log,.txt,.json,.ndjson,.csv" />
@@ -40,11 +41,9 @@
 
         
         <div class="hint muted">
-            Tip: if query is wrapped with quotes like <code>"timeout error"</code>, exact mode is used automatically. Regex examples: <code>ERROR|WARN</code>, <code>timeout\\s+\d+</code>.
+          Tip: if query is wrapped with quotes like <code>"timeout error"</code>, exact mode is used automatically. Regex examples: <code>ERROR|WARN</code>, <code>timeout\\s+\d+</code>.
         </div>
-    </section>
-    
-    <section class="results card">
+
         <div class="results-head">
             <h2>Matches</h2>
             <span id="resultCount" class="pill">0</span>
