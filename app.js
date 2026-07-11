@@ -16,8 +16,6 @@ const resultCount = document.getElementById("resultCount");
 const prevPageBtn = document.getElementById("prevPageBtn");
 const nextPageBtn = document.getElementById("nextPageBtn");
 const pageInfo = document.getElementById("pageInfo");
-const jsonView = document.getElementById("jsonView");
-const copyPrettyJsonBtn = document.getElementById("copyPrettyJsonBtn");
 
 let allLines = [];
 let matchedItems = [];
@@ -27,6 +25,7 @@ let currentMode = "include";
 let currentRegex = null;
 let currentFileBaseName = "log";
 let selectedLineIndex = null;
+let pendingExpandedScrollIndex = null;
 
 if (importBtn && fileInput) {
   importBtn.addEventListener("click", () => {
@@ -160,25 +159,11 @@ clearBtn.addEventListener("click", () => {
   endTime.value = "";
   levelFilter.value = "all";
   pageSize.value = "100";
-  jsonView.textContent = "Select a matched line to parse JSON.";
   runSearch();
 });
 
 exportTxtBtn.addEventListener("click", () => exportMatches("txt"));
 exportJsonBtn.addEventListener("click", () => exportMatches("json"));
-
-if (copyPrettyJsonBtn) {
-  copyPrettyJsonBtn.addEventListener("click", async () => {
-    const text = String(jsonView?.textContent || "").trim();
-    const hasJson = text && text !== "Select a matched line to parse JSON." && text !== "No valid JSON found in this line.";
-    const copied = hasJson ? await copyTextToClipboard(text) : false;
-    const originalLabel = copyPrettyJsonBtn.textContent;
-    copyPrettyJsonBtn.textContent = copied ? "Copied" : "No JSON";
-    window.setTimeout(() => {
-      copyPrettyJsonBtn.textContent = originalLabel;
-    }, 1200);
-  });
-}
 
 prevPageBtn.addEventListener("click", () => {
   if (currentPage <= 1) return;
@@ -345,11 +330,13 @@ function renderResults(items, query, mode, regex) {
 
   items.forEach(({ line, index }) => {
     const timestamps = extractTimestampColumns(line);
+    const isExpanded = selectedLineIndex === index;
+    const prettyJson = prettyJsonFromLine(line);
 
     const row = document.createElement("button");
     row.className = "row";
     row.type = "button";
-    if (selectedLineIndex === index) {
+    if (isExpanded) {
       row.classList.add("selected-row");
     }
 
@@ -369,6 +356,9 @@ function renderResults(items, query, mode, regex) {
     text.className = "line-text";
     text.innerHTML = highlight(line, query, mode, regex);
 
+    const actionCell = document.createElement("div");
+    actionCell.className = "row-actions";
+
     const copyBtn = document.createElement("button");
     copyBtn.className = "btn ghost row-copy-btn";
     copyBtn.type = "button";
@@ -383,25 +373,87 @@ function renderResults(items, query, mode, regex) {
       }, 1200);
     });
 
+    const toggleBtn = document.createElement("button");
+    toggleBtn.className = "btn ghost row-toggle-btn";
+    toggleBtn.type = "button";
+    toggleBtn.textContent = isExpanded ? "Collapse" : "Expand";
+    toggleBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const nextExpanded = selectedLineIndex === index ? null : index;
+      pendingExpandedScrollIndex = nextExpanded;
+      selectedLineIndex = nextExpanded;
+      renderCurrentPage();
+    });
+
+    actionCell.appendChild(copyBtn);
+    actionCell.appendChild(toggleBtn);
+
     row.appendChild(lineNo);
     row.appendChild(atTimestamp);
     row.appendChild(timestamp);
     row.appendChild(text);
-    row.appendChild(copyBtn);
+    row.appendChild(actionCell);
 
     row.addEventListener("click", () => {
       if (hasActiveTextSelection()) {
         return;
       }
-      selectedLineIndex = index;
-      jsonView.textContent = prettyJsonFromLine(line);
-      renderCurrentPage();
+      // Row click keeps text selection behavior stable; expand/collapse uses explicit button.
     });
 
     fragment.appendChild(row);
+
+    if (isExpanded) {
+      const expandedPanel = buildExpandedRowPanel(prettyJson);
+      expandedPanel.dataset.rowIndex = String(index);
+      fragment.appendChild(expandedPanel);
+    }
   });
 
   resultList.appendChild(fragment);
+}
+
+function buildExpandedRowPanel(prettyJson) {
+  const panel = document.createElement("div");
+  panel.className = "row-expanded";
+
+  const tabs = document.createElement("div");
+  tabs.className = "row-expanded-tabs";
+
+  const jsonBtn = document.createElement("button");
+  jsonBtn.className = "row-tab-btn active";
+  jsonBtn.type = "button";
+  jsonBtn.textContent = "JSON";
+
+  const copyJsonBtn = document.createElement("button");
+  copyJsonBtn.className = "row-tab-btn row-tab-copy-btn";
+  copyJsonBtn.type = "button";
+  copyJsonBtn.textContent = "Copy JSON";
+
+  tabs.appendChild(jsonBtn);
+  tabs.appendChild(copyJsonBtn);
+
+  const jsonView = document.createElement("div");
+  jsonView.className = "scroll-container";
+  
+  const jsonViewEl = document.createElement("pre");
+  jsonViewEl.className = "row-expanded-json scroll-item";
+  jsonViewEl.textContent = prettyJson;
+
+  jsonView.appendChild(jsonViewEl);
+
+  copyJsonBtn.addEventListener("click", async () => {
+    const copied = await copyTextToClipboard(String(prettyJson || ""));
+    const original = copyJsonBtn.textContent;
+    copyJsonBtn.textContent = copied ? "Copied" : "Copy failed";
+    window.setTimeout(() => {
+      copyJsonBtn.textContent = original;
+    }, 1200);
+  });
+
+  panel.appendChild(tabs);
+  panel.appendChild(jsonView);
+  return panel;
 }
 
 function renderCurrentPage() {
@@ -418,6 +470,17 @@ function renderCurrentPage() {
 
   renderResults(pageItems, currentQuery, currentMode, currentRegex);
   updatePaginationUi(totalPages);
+
+  if (pendingExpandedScrollIndex !== null) {
+    scrollExpandedRowIntoView(pendingExpandedScrollIndex);
+    pendingExpandedScrollIndex = null;
+  }
+}
+
+function scrollExpandedRowIntoView(rowIndex) {
+  const expandedPanel = resultList.querySelector(`.row-expanded[data-row-index="${rowIndex}"]`);
+  if (!expandedPanel) return;
+  expandedPanel.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
 }
 
 function updatePaginationUi(totalPages) {
