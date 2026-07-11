@@ -28,6 +28,11 @@ let currentFileBaseName = "log";
 let selectedLineIndex = null;
 let pendingExpandedScrollIndex = null;
 let dragCounter = 0;
+let collapsingLineIndex = null;
+let collapseTimerId = null;
+const COLLAPSE_ANIMATION_MS = 220;
+let expandScrollTimerId = null;
+const EXPAND_SCROLL_DELAY_MS = COLLAPSE_ANIMATION_MS + 20;
 
 if (importBtn && fileInput) {
   importBtn.addEventListener("click", () => {
@@ -411,12 +416,14 @@ function renderResults(items, query, mode, regex) {
   items.forEach(({ line, index }) => {
     const timestamps = extractTimestampColumns(line);
     const isExpanded = selectedLineIndex === index;
+    const isCollapsing = collapsingLineIndex === index;
+    const isPanelVisible = isExpanded || isCollapsing;
     const prettyJson = prettyJsonFromLine(line);
 
     const row = document.createElement("button");
     row.className = "row";
     row.type = "button";
-    if (isExpanded) {
+    if (isPanelVisible) {
       row.classList.add("selected-row");
     }
 
@@ -456,13 +463,10 @@ function renderResults(items, query, mode, regex) {
     const toggleBtn = document.createElement("button");
     toggleBtn.className = "btn ghost row-toggle-btn";
     toggleBtn.type = "button";
-    toggleBtn.textContent = isExpanded ? "Collapse" : "Expand";
+    toggleBtn.textContent = isPanelVisible ? "Collapse" : "Expand";
     toggleBtn.addEventListener("click", (event) => {
       event.stopPropagation();
-      const nextExpanded = selectedLineIndex === index ? null : index;
-      pendingExpandedScrollIndex = nextExpanded;
-      selectedLineIndex = nextExpanded;
-      renderCurrentPage();
+      toggleExpandedRow(index);
     });
 
     actionCell.appendChild(copyBtn);
@@ -483,8 +487,8 @@ function renderResults(items, query, mode, regex) {
 
     fragment.appendChild(row);
 
-    if (isExpanded) {
-      const expandedPanel = buildExpandedRowPanel(prettyJson);
+    if (isPanelVisible) {
+      const expandedPanel = buildExpandedRowPanel(prettyJson, isCollapsing);
       expandedPanel.dataset.rowIndex = String(index);
       fragment.appendChild(expandedPanel);
     }
@@ -493,9 +497,9 @@ function renderResults(items, query, mode, regex) {
   resultList.appendChild(fragment);
 }
 
-function buildExpandedRowPanel(prettyJson) {
+function buildExpandedRowPanel(prettyJson, isCollapsing = false) {
   const panel = document.createElement("div");
-  panel.className = "row-expanded";
+  panel.className = `row-expanded${isCollapsing ? " is-collapsing" : ""}`;
 
   const tabs = document.createElement("div");
   tabs.className = "row-expanded-tabs";
@@ -536,6 +540,51 @@ function buildExpandedRowPanel(prettyJson) {
   return panel;
 }
 
+function toggleExpandedRow(index) {
+  if (collapsingLineIndex !== null) return;
+
+  if (selectedLineIndex === index) {
+    startCollapseAnimation(index);
+    return;
+  }
+
+  clearCollapseAnimationTimer();
+  clearExpandScrollTimer();
+  collapsingLineIndex = null;
+  selectedLineIndex = index;
+  pendingExpandedScrollIndex = index;
+  renderCurrentPage();
+}
+
+function startCollapseAnimation(index) {
+  clearCollapseAnimationTimer();
+  clearExpandScrollTimer();
+  collapsingLineIndex = index;
+  pendingExpandedScrollIndex = null;
+  renderCurrentPage();
+
+  collapseTimerId = window.setTimeout(() => {
+    if (selectedLineIndex === index) {
+      selectedLineIndex = null;
+    }
+    collapsingLineIndex = null;
+    collapseTimerId = null;
+    renderCurrentPage();
+  }, COLLAPSE_ANIMATION_MS);
+}
+
+function clearCollapseAnimationTimer() {
+  if (collapseTimerId === null) return;
+  window.clearTimeout(collapseTimerId);
+  collapseTimerId = null;
+}
+
+function clearExpandScrollTimer() {
+  if (expandScrollTimerId === null) return;
+  window.clearTimeout(expandScrollTimerId);
+  expandScrollTimerId = null;
+}
+
 function renderCurrentPage() {
   const size = getPageSizeValue();
   const total = matchedItems.length;
@@ -552,9 +601,17 @@ function renderCurrentPage() {
   updatePaginationUi(totalPages);
 
   if (pendingExpandedScrollIndex !== null) {
-    scrollExpandedRowIntoView(pendingExpandedScrollIndex);
+    scheduleExpandedRowScroll(pendingExpandedScrollIndex);
     pendingExpandedScrollIndex = null;
   }
+}
+
+function scheduleExpandedRowScroll(rowIndex) {
+  clearExpandScrollTimer();
+  expandScrollTimerId = window.setTimeout(() => {
+    scrollExpandedRowIntoView(rowIndex);
+    expandScrollTimerId = null;
+  }, EXPAND_SCROLL_DELAY_MS);
 }
 
 function scrollExpandedRowIntoView(rowIndex) {
