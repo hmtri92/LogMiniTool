@@ -16,6 +16,7 @@ const resultCount = document.getElementById("resultCount");
 const prevPageBtn = document.getElementById("prevPageBtn");
 const nextPageBtn = document.getElementById("nextPageBtn");
 const pageInfo = document.getElementById("pageInfo");
+const dropZone = document.getElementById("dropZone");
 
 let allLines = [];
 let matchedItems = [];
@@ -26,6 +27,7 @@ let currentRegex = null;
 let currentFileBaseName = "log";
 let selectedLineIndex = null;
 let pendingExpandedScrollIndex = null;
+let dragCounter = 0;
 
 if (importBtn && fileInput) {
   importBtn.addEventListener("click", () => {
@@ -39,6 +41,13 @@ if (fileInput) {
   fileInput.addEventListener("change", handleFileSelection);
   // Some browsers are more reliable with input event for file controls.
   fileInput.addEventListener("input", handleFileSelection);
+}
+
+if (dropZone && fileInput) {
+  dropZone.addEventListener("dragenter", onDropZoneDragEnter);
+  dropZone.addEventListener("dragover", onDropZoneDragOver);
+  dropZone.addEventListener("dragleave", onDropZoneDragLeave);
+  dropZone.addEventListener("drop", onDropZoneDrop);
 }
 
 function parseCsv(text) {
@@ -110,11 +119,20 @@ async function handleFileSelection(event) {
   const file = event.target?.files?.[0];
   if (!file) return;
 
+  await processSelectedFile(file);
+}
+
+async function processSelectedFile(file) {
+  if (!file) return;
+
+  setDropZoneState("loading");
+
   let text = "";
   try {
     text = await file.text();
   } catch (error) {
     fileMeta.textContent = `Cannot read file: ${file.name}`;
+    setDropZoneState("error");
     resultList.innerHTML = "";
     resultCount.textContent = "0";
     const msg = document.createElement("div");
@@ -137,9 +155,11 @@ async function handleFileSelection(event) {
     currentFileBaseName = (file.name || "log").replace(/\.[^.]+$/, "") || "log";
     selectedLineIndex = null;
     fileMeta.textContent = `${file.name} | ${allLines.length.toLocaleString()} lines`;
+    setDropZoneState("ready");
     runSearch();
   } catch (error) {
     fileMeta.textContent = `${file.name} | ${allLines.length.toLocaleString()} lines (loaded)`;
+    setDropZoneState("error");
     resultList.innerHTML = "";
     resultCount.textContent = "0";
     const msg = document.createElement("div");
@@ -149,6 +169,66 @@ async function handleFileSelection(event) {
     resultList.appendChild(msg);
     console.error("Post-load processing failed", error);
   }
+}
+
+function onDropZoneDragEnter(event) {
+  event.preventDefault();
+  dragCounter += 1;
+  setDropZoneState("active");
+}
+
+function onDropZoneDragOver(event) {
+  event.preventDefault();
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = "copy";
+  }
+}
+
+function onDropZoneDragLeave(event) {
+  event.preventDefault();
+  dragCounter = Math.max(0, dragCounter - 1);
+  if (dragCounter === 0) {
+    setDropZoneState("ready");
+  }
+}
+
+async function onDropZoneDrop(event) {
+  event.preventDefault();
+  dragCounter = 0;
+  setDropZoneState("ready");
+
+  const file = event.dataTransfer?.files?.[0];
+  if (!file) {
+    setDropZoneState("error");
+    fileMeta.textContent = "Drop failed: no file found";
+    return;
+  }
+
+  await processSelectedFile(file);
+}
+
+function setDropZoneState(state) {
+  if (!dropZone) return;
+
+  dropZone.classList.remove("is-active", "has-error");
+
+  if (state === "active") {
+    dropZone.classList.add("is-active");
+    return;
+  }
+
+  if (state === "loading") {
+    dropZone.setAttribute("aria-busy", "true");
+    return;
+  }
+
+  if (state === "error") {
+    dropZone.classList.add("has-error");
+    dropZone.removeAttribute("aria-busy");
+    return;
+  }
+
+  dropZone.removeAttribute("aria-busy");
 }
 
 searchBtn.addEventListener("click", runSearch);

@@ -119,6 +119,27 @@ body {
   line-height: 1.1;
 }
 
+#dropZone {
+  min-height: 52px;
+  border: 2px dashed #b8b0a2;
+  border-radius: 10px;
+  background: #f7f1e5;
+  transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease;
+  padding: 0.45rem 0.6rem;
+}
+
+#dropZone.is-active {
+  border-color: var(--accent-2);
+  background: #e9f1f3;
+  color: #19313b;
+}
+
+#dropZone.has-error {
+  border-color: #b43f2a;
+  background: #f8e7e2;
+  color: #6f2a1b;
+}
+
 .result-control-row {
   margin-left: auto;
   margin-right: 0;
