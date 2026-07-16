@@ -284,22 +284,40 @@ async function processSelectedFile(file) {
   }
 
   try {
-    const isCsv = file.name.toLowerCase().endsWith(".csv");
     const startTime = performance.now();
     
-    if (isCsv) {
-      const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
-      const sizeInfo = file.size > 1024 * 1024 
-        ? `${fileSizeMB} MB` 
-        : `${(file.size / 1024).toFixed(2)} KB`;
-      fileMeta.textContent = `Parsing CSV ${file.name} (${sizeInfo})...`;
+    // Check if this is a JSON export (array of objects with 'line' property)
+    let isJsonExport = false;
+    if (file.name.toLowerCase().endsWith(".json")) {
+      try {
+        const parsed = JSON.parse(text);
+        if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].line !== undefined) {
+          isJsonExport = true;
+          allLines = parsed.map(item => item.line);
+          fileMeta.textContent = `Imported JSON export: ${file.name} (${allLines.length.toLocaleString()} lines)`;
+        }
+      } catch (e) {
+        // Not a valid JSON export, will try other formats
+      }
+    }
+    
+    if (!isJsonExport) {
+      const isCsv = file.name.toLowerCase().endsWith(".csv");
       
-      const csv = parseCsv(text);
-      allLines = csv.lines;
-      
-      const parseTime = ((performance.now() - startTime) / 1000).toFixed(2);
-    } else {
-      allLines = text.split(/\r?\n/);
+      if (isCsv) {
+        const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+        const sizeInfo = file.size > 1024 * 1024 
+          ? `${fileSizeMB} MB` 
+          : `${(file.size / 1024).toFixed(2)} KB`;
+        fileMeta.textContent = `Parsing CSV ${file.name} (${sizeInfo})...`;
+        
+        const csv = parseCsv(text);
+        allLines = csv.lines;
+        
+        const parseTime = ((performance.now() - startTime) / 1000).toFixed(2);
+      } else {
+        allLines = text.split(/\r?\n/);
+      }
     }
     
     // Clear large text from memory after parsing
