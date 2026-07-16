@@ -724,6 +724,22 @@ function runSearch() {
     }
   }
 
+  // Show loading indicator for large files (>10k lines)
+  if (allLines.length > 10000) {
+    resultList.innerHTML = '<div class="loading-message"><span class="spinner"></span>Searching and sorting ' + allLines.length.toLocaleString() + ' lines...</div>';
+    resultCount.textContent = "⏳";
+    
+    // Use setTimeout to allow UI to update before heavy processing
+    setTimeout(() => {
+      performSearch(query, mode, regex, hasQuery, fromMs, toMs, selectedLevel, searchStartTime);
+    }, 50);
+  } else {
+    // For small files, search immediately
+    performSearch(query, mode, regex, hasQuery, fromMs, toMs, selectedLevel, searchStartTime);
+  }
+}
+
+function performSearch(query, mode, regex, hasQuery, fromMs, toMs, selectedLevel, searchStartTime) {
   let matches = allLines
     .map((line, index) => ({ line, index }))
     .filter(({ line, index }) => {
