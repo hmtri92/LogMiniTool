@@ -1,6 +1,6 @@
 # Log Mini Tool
 
-A tiny browser-based tool to import log files (`.log`, `.txt`, `.json`, `.ndjson`, `.csv`), search lines, and pretty-print JSON content found in a selected line.
+A tiny browser-based tool to import log files (`.log`, `.txt`, `.json`, `.ndjson`, `.csv`), search lines, export results, and pretty-print JSON content. Supports re-importing exported files to restore filtered results.
 
 ## Run
 
@@ -9,6 +9,7 @@ A tiny browser-based tool to import log files (`.log`, `.txt`, `.json`, `.ndjson
    - Plain text: `.log`, `.txt`
    - JSON: `.json`, `.ndjson`
    - CSV: `.csv` (extracts log field and all columns as JSON)
+   - **Exported files**: Previously exported JSON or TXT files can be re-imported
 3. Search using:
    - **Include** mode: finds lines containing the keyword.
    - **Exact** mode: line must contain the exact phrase (case-sensitive).
@@ -31,7 +32,10 @@ A tiny browser-based tool to import log files (`.log`, `.txt`, `.json`, `.ndjson
 7. Export:
    - `Export TXT`: writes all current matched lines to a text file.
    - `Export JSON`: writes all current matched lines with `lineNumber`, `level`, `timestamp`, and `line`.
-8. Click a matched line to pretty-print JSON in the lower panel.
+8. **Re-import exported files**:
+   - Exported JSON files can be imported back to restore the filtered results.
+   - Exported TXT files can also be re-imported and searched again.
+9. Click a matched line to pretty-print JSON in the lower panel.
 
 ## Files
 
