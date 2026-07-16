@@ -1,6 +1,7 @@
 const fileInput = document.getElementById("fileInput");
 const importBtn = document.getElementById("importBtn");
 const fileMeta = document.getElementById("fileMeta");
+const appTitle = document.getElementById("appTitle");
 const searchInput = document.getElementById("searchInput");
 const searchMode = document.getElementById("searchMode");
 const startTime = document.getElementById("startTime");
@@ -42,6 +43,15 @@ if (importBtn && fileInput) {
     // Reset so selecting the same file again still triggers change.
     fileInput.value = "";
     fileInput.click();
+  });
+}
+
+if (appTitle) {
+  appTitle.addEventListener("click", () => {
+    // Hard reload: bypass cache by adding timestamp query parameter
+    // This forces the browser to reload all CSS/JS files fresh
+    const baseUrl = window.location.href.split('?')[0];
+    window.location.href = baseUrl + '?_=' + Date.now();
   });
 }
 
@@ -796,6 +806,10 @@ function performSearch(query, mode, regex, hasQuery, fromMs, toMs, selectedLevel
   currentMode = mode;
   currentRegex = regex;
   currentPage = 1;
+  
+  // Update URL query parameters
+  updateUrlParams();
+  
   renderCurrentPage();
 }
 
@@ -1740,3 +1754,79 @@ function hasActiveTextSelection() {
   const selection = window.getSelection();
   return Boolean(selection && selection.toString().trim().length > 0);
 }
+
+// URL Query Parameter Management
+function updateUrlParams() {
+  const params = new URLSearchParams();
+  
+  const searchValue = searchInput.value.trim();
+  if (searchValue) {
+    params.set('q', searchValue);
+  }
+  
+  const fromValue = startTime.value;
+  if (fromValue) {
+    params.set('from', fromValue);
+  }
+  
+  const toValue = endTime.value;
+  if (toValue) {
+    params.set('to', toValue);
+  }
+  
+  const level = levelFilter.value;
+  if (level && level !== 'all') {
+    params.set('level', level);
+  }
+  
+  const mode = searchMode.value;
+  if (mode && mode !== 'include') {
+    params.set('mode', mode);
+  }
+  
+  // Update URL without reloading the page
+  const newUrl = params.toString() ? `${window.location.pathname}?${params.toString()}` : window.location.pathname;
+  window.history.replaceState({}, '', newUrl);
+}
+
+function loadFromUrlParams() {
+  const params = new URLSearchParams(window.location.search);
+  
+  const searchValue = params.get('q');
+  if (searchValue) {
+    searchInput.value = searchValue;
+  }
+  
+  const fromValue = params.get('from');
+  if (fromValue) {
+    startTime.value = fromValue;
+  }
+  
+  const toValue = params.get('to');
+  if (toValue) {
+    endTime.value = toValue;
+  }
+  
+  const level = params.get('level');
+  if (level) {
+    levelFilter.value = level;
+  }
+  
+  const mode = params.get('mode');
+  if (mode) {
+    searchMode.value = mode;
+  }
+  
+  // If there are search parameters and a file is loaded, run the search
+  return params.toString().length > 0;
+}
+
+// Initialize from URL parameters on page load
+document.addEventListener('DOMContentLoaded', () => {
+  const hasParams = loadFromUrlParams();
+  
+  // If URL has parameters and file is already loaded, trigger search
+  if (hasParams && allLines.length > 0) {
+    runSearch();
+  }
+});
