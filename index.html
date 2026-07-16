@@ -17,7 +17,7 @@
         <div id="dropZone" class="file-row">
           <button id="importBtn" class="btn" type="button">Import Log File</button>
           <input id="fileInput" class="visually-hidden-input" type="file" accept=".log,.txt,.json,.ndjson,.csv" />
-          <span id="fileMeta" class="muted">No file loaded</span>
+          <span id="fileMeta" class="muted">No file loaded (Supports files up to 600MB+ with streaming)</span>
         </div>
 
         <div class="search-row">
@@ -71,9 +71,15 @@
         </div>
         <div id="resultList" class="list" aria-live="polite"></div>
         <div class="pagination-row">
+          <button id="firstPageBtn" class="btn ghost" type="button">First</button>
           <button id="prevPageBtn" class="btn ghost" type="button">Prev</button>
           <span id="pageInfo" class="muted">Page 1 / 1</span>
           <button id="nextPageBtn" class="btn ghost" type="button">Next</button>
+          <div style="display: flex; align-items: center; gap: 0.5rem; margin-left: 1rem;">
+            <label class="muted" for="gotoPageInput" style="margin: 0;">Go to:</label>
+            <input id="gotoPageInput" type="number" min="1" style="width: 70px; padding: 0.4rem; border: 1px solid #ccc; border-radius: 4px;" placeholder="Page" />
+            <button id="gotoPageBtn" class="btn ghost" type="button">Go</button>
+          </div>
         </div>
       </section>
 
