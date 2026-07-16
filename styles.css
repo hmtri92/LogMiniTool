@@ -7,8 +7,7 @@
   --line: #d8d1c4;
   --soft: #6a6a66;
   --col-line: 96px;
-  --col-at: 170px;
-  --col-ts: 170px;
+  --col-utc: 200px;
 }
 
 * {
@@ -229,7 +228,7 @@ select {
 
 .row {
   display: grid;
-  grid-template-columns: var(--col-line) var(--col-at) var(--col-ts) minmax(
+  grid-template-columns: var(--col-line) var(--col-utc) minmax(
       0,
       1fr
     ) auto;
@@ -259,6 +258,19 @@ select {
 }
 
 .line-ts {
+  white-space: pre-wrap;
+  overflow: visible;
+  text-overflow: clip;
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 0.76rem;
+  width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  color: #384a5a;
+}
+
+.line-ts-utc {
   white-space: pre-wrap;
   overflow: visible;
   text-overflow: clip;
@@ -447,10 +459,12 @@ select {
 }
 
 mark {
-  background: #ffe7af;
-  color: #6b3500;
-  border-radius: 3px;
-  padding: 0 2px;
+  background: #ffeb3b;
+  color: #000;
+  border-radius: 2px;
+  padding: 1px 3px;
+  font-weight: 600;
+  box-shadow: 0 0 0 1px rgba(255, 193, 7, 0.3);
 }
 
 @media (max-width: 720px) {

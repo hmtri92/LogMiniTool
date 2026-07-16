@@ -16,6 +16,8 @@ A tiny browser-based tool to import log files (`.log`, `.txt`, `.json`, `.ndjson
    - Or type quoted query like `"timeout error"` to force exact mode automatically.
 4. Optional time filter:
    - Set **From** and/or **To** to filter by timestamp in each line.
+   - **Important**: Datetime range filtering is based on UTC time. Select your local date/time and click **Search** to apply the filter.
+   - Timestamps are displayed in UTC format (e.g., `2026-07-10T03:04:32.487Z`)
    - Supported timestamp formats include:
      - `YYYY-MM-DD HH:mm:ss` (or with `T`)
      - `YYYY-MM-DDTHH:mm:ssZ` / timezone offsets
@@ -44,37 +46,35 @@ When importing CSV files, the tool:
 - Extracts the main log content from fields named: `log`, `message`, or `content`
 - Detects and parses nested JSON within the log field
 - Merges nested JSON fields (like `@timestamp`, `level`, `traceId`) to the top level for filtering
+- **Displays timestamps in UTC format** (extracts from `@timestamp` or `timestamp` fields)
 - Displays the full CSV row as JSON when you expand a line
 - Supports all filtering features (search, time range, log level) on CSV data
 - **Handles very large CSV files** (tested with 600MB+ files)
   - Files < 50MB: Uses standard browser File API
   - Files 50-200MB: Uses FileReader with progress tracking
-  - Files ≥ 200MB: **Uses reverse streaming parser** (reads from end to start in 10MB chunks)
-  - **Optimized for newest-first display**: Large files are read in reverse order to avoid sorting
+  - Files ≥ 200MB: **Uses streaming parser** (reads in 10MB chunks)
   - Never loads entire file into memory for large files
-  - Shows progress during parsing: "Parsing (newest first)... 20% (5,000 rows)"
+  - Shows progress during parsing: "Parsing... 20% (5,000 rows)"
+  - Results are sorted by datetime (newest first) after filtering
 
 **Performance notes:**
 - Small files (<10MB): Instant loading
 - Medium files (10-50MB): 1-5 seconds
 - Large files (50-200MB): 5-30 seconds
-- Very large files (200-600MB): 30-120 seconds with reverse streaming
-- **Reverse streaming eliminates sorting delay** - 600MB file loads ready to view newest logs first!
+- Very large files (200-600MB): 30-120 seconds with streaming
 
-**How reverse streaming works for large files:**
-1. Reads file headers from the beginning
-2. **Reads file content from END to START in 10MB chunks** (newest logs first)
-3. Parses CSV line-by-line without loading entire file
-4. Builds result array in descending datetime order (newest first)
-5. **No sorting needed** - data is already in the correct order!
-6. Shows real-time progress: "Parsing (newest first)... 40% (50,000 rows)"
-7. Memory-efficient: only keeps parsed lines, not raw CSV text
+**How streaming works for large files:**
+1. Reads file in 10MB chunks (forward direction, first row to last)
+2. Parses CSV line-by-line without loading entire file
+3. Shows real-time progress: "Parsing... 40% (50,000 rows)"
+4. After filtering, results are sorted by datetime (newest first)
+5. Memory-efficient: only keeps parsed lines, not raw CSV text
 
-**Benefits of reverse streaming:**
-- ⚡ **Faster initial view**: No sorting delay for large files
-- 🎯 **Newest logs appear first**: Perfect for troubleshooting recent issues
+**Benefits:**
+- 🎯 **Newest logs appear first**: Results sorted by datetime descending
 - 💾 **Memory-efficient**: Processes 10MB at a time instead of loading all 600MB
 - 📊 **Progress tracking**: Real-time feedback during long operations
+- 🔧 **Simple & reliable**: Forward reading ensures compatibility
 
 **For the best experience with very large files:**
 - Use Chrome or Edge (better memory handling)

@@ -31,7 +31,6 @@ let currentFileBaseName = "log";
 let selectedLineIndex = null;
 let pendingExpandedScrollIndex = null;
 let dragCounter = 0;
-let isAlreadySortedDesc = false; // Flag for reverse-streamed large files
 let collapsingLineIndex = null;
 let collapseTimerId = null;
 const COLLAPSE_ANIMATION_MS = 220;
@@ -70,7 +69,6 @@ function parseCsv(text) {
     }
 
     const headers = rows[0].map(h => h.trim());
-    console.log(`CSV headers (${headers.length}):`, headers.slice(0, 5).join(', '));
     
     let emptyRowCount = 0;
     let validRowCount = 0;
@@ -99,11 +97,6 @@ function parseCsv(text) {
       // Extract the main log content from common field names
       const logField = record.log || record.message || record.content || "";
       
-      // Debug first few rows
-      if (validRowCount < 3) {
-        console.log(`Row ${i} - log field length: ${logField.length}, has JSON: ${logField.includes('{')}`);
-      }
-      
       // Try to extract JSON from the log field
       let enrichedRecord = { ...record };
       if (logField) {
@@ -115,16 +108,40 @@ function parseCsv(text) {
             // Handle escaped quotes in JSON
             const unescaped = jsonPart.replace(/""/g, '"');
             const logJson = JSON.parse(unescaped);
-            // Merge log JSON fields into the record for better timestamp/level extraction
-            enrichedRecord = { ...record, ...logJson, _csvRow: record };
-            if (validRowCount === 0) {
-              console.log(`First row JSON parsed successfully, fields:`, Object.keys(logJson).slice(0, 10).join(', '));
-            }
+            
+            // Preserve CSV column timestamps - they are the authoritative source
+            const csvTimestamp = record['@timestamp'];
+            const csvTimestampAlt = record['timestamp'];
+            
+            // Merge log JSON fields into the record for better level/field extraction
+            // Store nested JSON timestamps separately to avoid overwriting CSV columns
+            enrichedRecord = { 
+              ...record, 
+              ...logJson, 
+              _csvRow: record,
+              _nestedTimestamp: logJson['@timestamp'] || logJson['timestamp']
+            };
+            
+            // Restore CSV column timestamps (they take priority)
+            if (csvTimestamp) enrichedRecord['@timestamp'] = csvTimestamp;
+            if (csvTimestampAlt) enrichedRecord['timestamp'] = csvTimestampAlt;
           } catch (e) {
             // If parsing fails, try with original
             try {
               const logJson = JSON.parse(jsonPart);
-              enrichedRecord = { ...record, ...logJson, _csvRow: record };
+              
+              const csvTimestamp = record['@timestamp'];
+              const csvTimestampAlt = record['timestamp'];
+              
+              enrichedRecord = { 
+                ...record, 
+                ...logJson, 
+                _csvRow: record,
+                _nestedTimestamp: logJson['@timestamp'] || logJson['timestamp']
+              };
+              
+              if (csvTimestamp) enrichedRecord['@timestamp'] = csvTimestamp;
+              if (csvTimestampAlt) enrichedRecord['timestamp'] = csvTimestampAlt;
             } catch (e2) {
               // If still fails, keep original record
               if (validRowCount === 0) {
@@ -140,8 +157,6 @@ function parseCsv(text) {
       lines.push(line);
       validRowCount++;
     }
-
-    console.log(`CSV parsed: ${validRowCount} valid data rows, ${emptyRowCount} empty rows skipped, ${rows.length - 1} total rows (excluding header)`);
   } catch (error) {
     console.error('CSV parsing error:', error);
     throw error;
@@ -156,19 +171,10 @@ function parseSimpleCsv(text) {
   let currentField = "";
   let insideQuotes = false;
   
-  console.log(`Starting CSV parse of ${(text.length / (1024 * 1024)).toFixed(2)} MB text`);
   const textLength = text.length;
   let lastProgressPercent = 0;
 
   for (let i = 0; i < textLength; i++) {
-    // Progress logging for large files
-    if (textLength > 10000000) { // 10MB+
-      const percent = Math.floor((i / textLength) * 100);
-      if (percent > lastProgressPercent && percent % 10 === 0) {
-        console.log(`CSV parse progress: ${percent}%`);
-        lastProgressPercent = percent;
-      }
-    }
     
     const char = text[i];
     const nextChar = text[i + 1];
@@ -203,7 +209,6 @@ function parseSimpleCsv(text) {
     rows.push(currentRow);
   }
 
-  console.log(`CSV parse complete: ${rows.length} total rows found`);
   return rows;
 }
 
@@ -219,13 +224,6 @@ async function processSelectedFile(file) {
 
   setDropZoneState("loading");
   
-  console.log('File details:', {
-    name: file.name,
-    size: file.size,
-    type: file.type,
-    lastModified: new Date(file.lastModified).toISOString()
-  });
-  
   // Display file size info
   const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
   const sizeInfo = file.size > 1024 * 1024 
@@ -234,10 +232,8 @@ async function processSelectedFile(file) {
   
   // Warn about very large files
   if (file.size > 200 * 1024 * 1024) { // 200MB+
-    console.warn(`Large file detected: ${fileSizeMB} MB - using streaming reader`);
     fileMeta.textContent = `Loading large file ${file.name} (${sizeInfo})... Please wait...`;
   } else if (file.size > 50 * 1024 * 1024) { // 50MB+
-    console.log(`Medium-large file: ${fileSizeMB} MB`);
     fileMeta.textContent = `Loading ${file.name} (${sizeInfo})...`;
   } else {
     fileMeta.textContent = `Loading ${file.name} (${sizeInfo})...`;
@@ -247,12 +243,9 @@ async function processSelectedFile(file) {
   try {
     // For very large files, use FileReader in chunks to avoid memory issues
     if (file.size > 200 * 1024 * 1024) {
-      console.log('File too large for single-pass reading, using streaming CSV parser...');
-      
-      // Use streaming parser for very large files (reads from end to start for newest-first)
+      // Use streaming parser for very large files
       const startTime = performance.now();
       allLines = await parseCSVFileInChunks(file, fileMeta);
-      isAlreadySortedDesc = true; // Data is already sorted newest-first
       const parseTime = ((performance.now() - startTime) / 1000).toFixed(2);
       
       currentFileBaseName = (file.name || "log").replace(/\.[^.]+$/, "") || "log";
@@ -262,9 +255,13 @@ async function processSelectedFile(file) {
       const sizeDisplay = file.size > 1024 * 1024 
         ? `${fileSizeMB} MB` 
         : `${(file.size / 1024).toFixed(2)} KB`;
-      fileMeta.textContent = `${file.name} | ${allLines.length.toLocaleString()} lines | ${sizeDisplay} | Loaded in ${parseTime}s`;
+      fileMeta.textContent = `${file.name} | ${allLines.length.toLocaleString()} lines | ${sizeDisplay} | Parsed in ${parseTime}s, processing...`;
+      
       setDropZoneState("ready");
+      const totalStartTime = performance.now();
       runSearch();
+      const totalTime = ((totalStartTime - startTime) / 1000).toFixed(2);
+      fileMeta.textContent = `${file.name} | ${allLines.length.toLocaleString()} lines | ${sizeDisplay} | Ready in ${totalTime}s (parsed ${parseTime}s)`;
       return; // Exit early since we've already processed
     } else if (file.size > 50 * 1024 * 1024) {
       // For medium-large files, use FileReader
@@ -272,7 +269,6 @@ async function processSelectedFile(file) {
     } else {
       text = await file.text();
     }
-    console.log(`File loaded into memory: ${(text.length / (1024 * 1024)).toFixed(2)} MB of text data`);
   } catch (error) {
     fileMeta.textContent = `Cannot read file: ${file.name}`;
     setDropZoneState("error");
@@ -300,16 +296,10 @@ async function processSelectedFile(file) {
       
       const csv = parseCsv(text);
       allLines = csv.lines;
-      isAlreadySortedDesc = false; // Standard parsing, not pre-sorted
       
       const parseTime = ((performance.now() - startTime) / 1000).toFixed(2);
-      console.log(`CSV parsed: ${allLines.length} lines from ${file.name} in ${parseTime}s`);
-      if (allLines.length > 0) {
-        console.log(`Sample CSV line:`, allLines[0].substring(0, 200));
-      }
     } else {
       allLines = text.split(/\r?\n/);
-      isAlreadySortedDesc = false; // Standard parsing, not pre-sorted
     }
     
     // Clear large text from memory after parsing
@@ -324,9 +314,11 @@ async function processSelectedFile(file) {
       ? `${fileSizeMB} MB` 
       : `${(file.size / 1024).toFixed(2)} KB`;
     const parseTime = ((performance.now() - startTime) / 1000).toFixed(2);
-    fileMeta.textContent = `${file.name} | ${allLines.length.toLocaleString()} lines | ${sizeDisplay} | Loaded in ${parseTime}s`;
+    fileMeta.textContent = `${file.name} | ${allLines.length.toLocaleString()} lines | ${sizeDisplay} | Parsed in ${parseTime}s, processing...`;
     setDropZoneState("ready");
     runSearch();
+    const totalTime = ((performance.now() - startTime) / 1000).toFixed(2);
+    fileMeta.textContent = `${file.name} | ${allLines.length.toLocaleString()} lines | ${sizeDisplay} | Ready in ${totalTime}s (parsed ${parseTime}s)`;
   } catch (error) {
     fileMeta.textContent = `${file.name} | ${allLines.length.toLocaleString()} lines (loaded)`;
     setDropZoneState("error");
@@ -377,83 +369,50 @@ async function onDropZoneDrop(event) {
   await processSelectedFile(file);
 }
 
-// Streaming CSV parser for very large files (processes in chunks from END to START for newest-first)
+// Streaming CSV parser for very large files (processes in chunks, then reverses for newest-first)
 async function parseCSVFileInChunks(file, statusElement) {
   const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB chunks
   const lines = [];
+  let offset = 0;
+  let buffer = '';
   let headers = null;
   let validRowCount = 0;
   
-  console.log(`Starting reverse streaming CSV parse of ${(file.size / (1024 * 1024)).toFixed(2)} MB file in ${CHUNK_SIZE / (1024 * 1024)}MB chunks (newest first)`);
-  
-  // Step 1: Read first chunk to get headers
-  const headerChunk = file.slice(0, Math.min(CHUNK_SIZE, file.size));
-  const headerText = await readChunk(headerChunk);
-  const firstNewline = headerText.indexOf('\n');
-  if (firstNewline === -1) {
-    console.error('Could not find header line');
-    return lines;
-  }
-  
-  const headerLine = headerText.substring(0, firstNewline);
-  headers = parseCSVLine(headerLine).map(f => f.trim());
-  console.log(`CSV headers (${headers.length}):`, headers.slice(0, 5).join(', '));
-  
-  // Step 2: Read file from END to START in chunks
-  let offset = file.size;
-  let buffer = ''; // Buffer for incomplete lines at chunk boundaries
-  let processedBytes = 0;
-  
-  while (offset > 0) {
-    // Calculate chunk boundaries
-    const chunkStart = Math.max(0, offset - CHUNK_SIZE);
-    const chunkEnd = offset;
-    
-    const chunk = file.slice(chunkStart, chunkEnd);
+  while (offset < file.size) {
+    const chunk = file.slice(offset, offset + CHUNK_SIZE);
     const chunkText = await readChunk(chunk);
+    buffer += chunkText;
     
-    // Prepend buffer (incomplete line from previous chunk) to current chunk
-    const fullText = chunkText + buffer;
-    
-    // Find the first complete line (skip partial line at the start of chunk)
-    let startPos = 0;
-    if (chunkStart > 0) {
-      // Not the first chunk, so skip the partial line at the beginning
-      const firstNewlinePos = fullText.indexOf('\n');
-      if (firstNewlinePos !== -1) {
-        startPos = firstNewlinePos + 1;
-      } else {
-        // No complete line in this chunk + buffer, save for next iteration
-        buffer = fullText;
-        offset = chunkStart;
-        processedBytes += chunkEnd - chunkStart;
-        continue;
-      }
+    // Process complete lines in the buffer
+    const lastNewline = buffer.lastIndexOf('\n');
+    if (lastNewline === -1) {
+      // No complete line yet, continue reading
+      offset += CHUNK_SIZE;
+      continue;
     }
     
-    // Split into complete lines
-    const textToProcess = fullText.substring(startPos);
-    const chunkLines = textToProcess.split(/\r?\n/);
+    const completeText = buffer.substring(0, lastNewline);
+    buffer = buffer.substring(lastNewline + 1); // Keep incomplete line in buffer
     
-    // Save the first line (incomplete at chunk boundary) for next iteration
-    buffer = chunkLines.shift() || '';
+    // Split into lines and process
+    const chunkLines = completeText.split(/\r?\n/);
     
-    // Process lines in REVERSE order (since we're reading backwards)
-    // This maintains newest-first ordering
-    for (let i = chunkLines.length - 1; i >= 0; i--) {
-      const csvLine = chunkLines[i];
+    for (const csvLine of chunkLines) {
       if (!csvLine.trim()) continue;
       
       const fields = parseCSVLine(csvLine);
       if (!fields || fields.length === 0) continue;
       
-      // Skip header line if we encounter it
-      if (fields[0] === headers[0]) continue;
+      // First line is headers
+      if (!headers) {
+        headers = fields.map(f => f.trim());
+        continue;
+      }
       
       // Build record from fields
       const record = {};
-      for (let j = 0; j < headers.length; j++) {
-        record[headers[j]] = fields[j] ? fields[j].trim() : '';
+      for (let i = 0; i < headers.length; i++) {
+        record[headers[i]] = fields[i] ? fields[i].trim() : '';
       }
       
       // Extract log field
@@ -480,24 +439,20 @@ async function parseCSVFileInChunks(file, statusElement) {
       validRowCount++;
     }
     
-    // Move to previous chunk
-    offset = chunkStart;
-    processedBytes += chunkEnd - chunkStart;
-    
     // Update progress
-    const progress = Math.min(100, Math.floor((processedBytes / file.size) * 100));
-    if (progress % 10 === 0 || offset === 0) {
-      console.log(`Reverse streaming progress: ${progress}% (${validRowCount.toLocaleString()} rows)`);
+    offset += CHUNK_SIZE;
+    const progress = Math.min(100, Math.floor((offset / file.size) * 100));
+    if (progress % 10 === 0 || offset >= file.size) {
       if (statusElement) {
-        statusElement.textContent = `Parsing ${file.name} (newest first)... ${progress}% (${validRowCount.toLocaleString()} rows)`;
+        statusElement.textContent = `Parsing ${file.name}... ${progress}% (${validRowCount.toLocaleString()} rows)`;
       }
     }
   }
   
-  // Process any remaining buffer (the very first line after headers)
-  if (buffer.trim() && buffer !== headerLine) {
+  // Process any remaining buffer
+  if (buffer.trim()) {
     const fields = parseCSVLine(buffer);
-    if (fields && fields.length > 0 && fields[0] !== headers[0]) {
+    if (fields && fields.length > 0 && headers) {
       const record = {};
       for (let i = 0; i < headers.length; i++) {
         record[headers[i]] = fields[i] ? fields[i].trim() : '';
@@ -518,7 +473,6 @@ async function parseCSVFileInChunks(file, statusElement) {
     }
   }
   
-  console.log(`Reverse streaming CSV parse complete: ${validRowCount.toLocaleString()} valid data rows (newest first, no sorting needed)`);
   return lines;
 }
 
@@ -587,8 +541,6 @@ async function readFileInChunks(file) {
     
     reader.onload = (e) => {
       const result = e.target.result;
-      console.log(`FileReader result type:`, typeof result);
-      console.log(`FileReader result:`, result ? `${(result.length / (1024 * 1024)).toFixed(2)} MB` : 'null/empty');
       
       if (!result || result.length === 0) {
         console.error('FileReader returned empty result despite file size:', file.size);
@@ -597,7 +549,6 @@ async function readFileInChunks(file) {
       }
       
       const text = result;
-      console.log(`File read complete: ${(text.length / (1024 * 1024)).toFixed(2)} MB`);
       resolve(text);
     };
     
@@ -612,19 +563,10 @@ async function readFileInChunks(file) {
       reject(new Error('File read was aborted'));
     };
     
-    reader.onloadstart = (e) => {
-      console.log('FileReader started, file size:', (file.size / (1024 * 1024)).toFixed(2), 'MB');
-    };
-    
-    reader.onloadend = (e) => {
-      console.log('FileReader ended, readyState:', reader.readyState, 'result length:', reader.result?.length || 0);
-    };
-    
     reader.onprogress = (e) => {
       if (e.lengthComputable) {
         const percent = Math.floor((e.loaded / e.total) * 100);
         if (percent % 10 === 0) {
-          console.log(`File read progress: ${percent}%`);
           fileMeta.textContent = `Reading ${file.name}... ${percent}%`;
         }
       }
@@ -714,14 +656,18 @@ pageSize.addEventListener("change", () => {
   renderCurrentPage();
 });
 
-startTime.addEventListener("change", runSearch);
-endTime.addEventListener("change", runSearch);
+// Datetime range filtering requires manual Search button click
+// (no auto-filter on date/time selection)
+
+levelFilter.addEventListener("change", runSearch);
 
 searchInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") runSearch();
 });
 
 function runSearch() {
+  const searchStartTime = performance.now();
+  
   if (!allLines.length) {
     matchedItems = [];
     currentQuery = buildQuerySpec("", "include");
@@ -780,36 +726,37 @@ function runSearch() {
 
   let matches = allLines
     .map((line, index) => ({ line, index }))
-    .filter(({ line }) => {
+    .filter(({ line, index }) => {
       const passesTime = linePassesTimeFilter(line, fromMs, toMs);
       const passesLevel = linePassesLevelFilter(line, selectedLevel);
       const passesQuery = !hasQuery || isMatch(line, query, mode, regex);
       
-      if (!passesTime || !passesLevel || !passesQuery) {
-        if (index === 0) {
-          console.log(`First line filter: time=${passesTime}, level=${passesLevel}, query=${passesQuery}`);
-        }
-      }
-      
       return passesTime && passesLevel && passesQuery;
     });
   
-  // Sort by datetime descending (newest first) - skip if already sorted from reverse streaming
-  if (!isAlreadySortedDesc) {
-    matches = matches.sort((a, b) => {
-      const timeA = extractTimestamp(a.line);
-      const timeB = extractTimestamp(b.line);
-      
-      // Handle null timestamps (lines without parseable datetime)
-      if (timeA === null && timeB === null) return 0;
-      if (timeA === null) return 1; // Put nulls at the end
-      if (timeB === null) return -1; // Put nulls at the end
-      
-      return timeB - timeA; // Descending order (newest first)
-    });
-  }
+  // Optimize sorting: cache timestamps before sort to avoid repeated extraction
+  // For 27k lines, this reduces ~400k extractTimestamp calls to just 27k
+  const sortStartTime = performance.now();
+  const matchesWithTime = matches.map(item => ({
+    ...item,
+    cachedTime: extractTimestamp(item.line)
+  }));
+  
+  // Sort by cached datetime descending (newest first)
+  matchesWithTime.sort((a, b) => {
+    const timeA = a.cachedTime;
+    const timeB = b.cachedTime;
+    
+    // Handle null timestamps (lines without parseable datetime)
+    if (timeA === null && timeB === null) return 0;
+    if (timeA === null) return 1; // Put nulls at the end
+    if (timeB === null) return -1; // Put nulls at the end
+    
+    return timeB - timeA; // Descending order (newest first)
+  });
+  
+  matches = matchesWithTime;
 
-  console.log(`Search complete: ${matches.length} matches from ${allLines.length} total lines (query: "${raw}", fromMs: ${fromMs}, toMs: ${toMs}, level: ${selectedLevel})${isAlreadySortedDesc ? ' [pre-sorted]' : ' [sorted desc]'}`);
   matchedItems = matches;
   currentQuery = query;
   currentMode = mode;
@@ -859,13 +806,9 @@ function renderResults(items, query, mode, regex) {
   lineHeader.className = "line-no";
   lineHeader.textContent = "Line";
 
-  const atTimestampHeader = document.createElement("div");
-  atTimestampHeader.className = "line-ts";
-  atTimestampHeader.textContent = "@timestamp";
-
-  const timestampHeader = document.createElement("div");
-  timestampHeader.className = "line-ts";
-  timestampHeader.textContent = "timestamp";
+  const utcTimestampHeader = document.createElement("div");
+  utcTimestampHeader.className = "line-ts-utc";
+  utcTimestampHeader.textContent = "Time (UTC)";
 
   const messageHeader = document.createElement("div");
   messageHeader.className = "line-text";
@@ -876,14 +819,13 @@ function renderResults(items, query, mode, regex) {
   actionHeader.textContent = "Action";
 
   headerRow.appendChild(lineHeader);
-  headerRow.appendChild(atTimestampHeader);
-  headerRow.appendChild(timestampHeader);
+  headerRow.appendChild(utcTimestampHeader);
   headerRow.appendChild(messageHeader);
   headerRow.appendChild(actionHeader);
   fragment.appendChild(headerRow);
 
   items.forEach(({ line, index }) => {
-    const timestamps = extractTimestampColumns(line);
+    const utcTime = extractUTCTimestamp(line);
     const isExpanded = selectedLineIndex === index;
     const isCollapsing = collapsingLineIndex === index;
     const isPanelVisible = isExpanded || isCollapsing;
@@ -900,13 +842,9 @@ function renderResults(items, query, mode, regex) {
     lineNo.className = "line-no";
     lineNo.textContent = `Line ${index + 1}`;
 
-    const atTimestamp = document.createElement("div");
-    atTimestamp.className = "line-ts";
-    atTimestamp.textContent = timestamps.atTimestamp ?? "-";
-
-    const timestamp = document.createElement("div");
-    timestamp.className = "line-ts";
-    timestamp.textContent = timestamps.timestamp ?? "-";
+    const utcTimestamp = document.createElement("div");
+    utcTimestamp.className = "line-ts-utc";
+    utcTimestamp.textContent = utcTime ?? "-";
 
     const text = document.createElement("div");
     text.className = "line-text";
@@ -942,8 +880,7 @@ function renderResults(items, query, mode, regex) {
     actionCell.appendChild(toggleBtn);
 
     row.appendChild(lineNo);
-    row.appendChild(atTimestamp);
-    row.appendChild(timestamp);
+    row.appendChild(utcTimestamp);
     row.appendChild(text);
     row.appendChild(actionCell);
 
@@ -1109,12 +1046,24 @@ function getTotalPages() {
 
 function highlight(line, query, mode, regex) {
   if (!query.raw) return escapeHtml(line);
-  if (mode === "exact") return escapeHtml(line);
 
   if (mode === "regex") {
     return highlightRegex(line, regex);
   }
 
+  // For exact mode, highlight the exact phrase (case-insensitive)
+  if (mode === "exact") {
+    const searchTerm = query.raw;
+    if (!searchTerm) return escapeHtml(line);
+    
+    // Escape the search term for regex
+    const escapedTerm = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const exactRegex = new RegExp(escapedTerm, "gi"); // case-insensitive
+    
+    return escapeHtml(line).replace(exactRegex, (token) => `<mark>${token}</mark>`);
+  }
+
+  // For include mode, highlight all terms
   const terms = query.terms.length ? query.terms : [query.raw];
   const escapedTerms = [...new Set(terms.filter((t) => t.length > 0))]
     .sort((a, b) => b.length - a.length)
@@ -1189,10 +1138,47 @@ function highlightRegex(line, regex) {
   return out.length ? out.join("") : escapeHtml(line);
 }
 
+function extractUTCTimestamp(line) {
+  // Use extractTimestampColumns which handles both CSV and JSON formats correctly
+  const columns = extractTimestampColumns(line);
+  
+  // Prefer @timestamp over timestamp field, and ensure it's in UTC format
+  if (columns.atTimestamp) {
+    return formatAsUTC(columns.atTimestamp);
+  }
+  
+  if (columns.timestamp) {
+    return formatAsUTC(columns.timestamp);
+  }
+  
+  return null;
+}
+
+function formatAsUTC(timestampValue) {
+  if (!timestampValue) return null;
+  
+  const text = String(timestampValue);
+  
+  // If already ends with Z, it's already UTC format
+  if (text.endsWith('Z')) {
+    return text;
+  }
+  
+  // Try to parse as timestamp and convert to UTC ISO string
+  const ms = parseTimestampTextToMillis(text);
+  if (ms !== null) {
+    return new Date(ms).toISOString();
+  }
+  
+  return null;
+}
+
 function parseDateInput(value) {
   if (!value) return null;
-  const date = new Date(value);
-  const time = date.getTime();
+  // Treat datetime-local input as UTC time to match the UTC timestamps in logs
+  // Input format: "2026-07-09T06:33" -> treat as "2026-07-09T06:33:00.000Z"
+  const utcDate = new Date(value + 'Z');
+  const time = utcDate.getTime();
   return Number.isNaN(time) ? null : time;
 }
 
@@ -1208,31 +1194,22 @@ function linePassesTimeFilter(line, fromMs, toMs) {
 }
 
 function extractTimestampForFilter(line) {
-  const embeddedAtTimestamp = extractNamedTimestampValue(line, "@timestamp");
-  if (embeddedAtTimestamp) {
-    const fromEmbeddedAt = parseLocalWallClockMillis(embeddedAtTimestamp);
-    if (fromEmbeddedAt !== null) return fromEmbeddedAt;
-  }
-
-  const embeddedTimestamp = extractNamedTimestampValue(line, "timestamp");
-  if (embeddedTimestamp) {
-    const fromEmbeddedTs = parseLocalWallClockMillis(embeddedTimestamp);
-    if (fromEmbeddedTs !== null) return fromEmbeddedTs;
-  }
-
+  // Use extractTimestampColumns FIRST - it correctly handles CSV format by parsing the enrichedRecord JSON
+  // This ensures filtering matches the Time (UTC) column display
   const columns = extractTimestampColumns(line);
 
   if (columns.atTimestamp) {
-    const fromAt = parseLocalWallClockMillis(columns.atTimestamp);
+    const fromAt = parseTimestampTextToMillis(columns.atTimestamp);
     if (fromAt !== null) return fromAt;
   }
 
   if (columns.timestamp) {
-    const fromTs = parseLocalWallClockMillis(columns.timestamp);
+    const fromTs = parseTimestampTextToMillis(columns.timestamp);
     if (fromTs !== null) return fromTs;
   }
 
-  const fromLine = parseLocalWallClockMillis(line);
+  // Fallback: try parsing the whole line
+  const fromLine = parseTimestampTextToMillis(line);
   if (fromLine !== null) return fromLine;
 
   return extractTimestamp(line);
@@ -1376,6 +1353,26 @@ function extractTimestampFromPatterns(line) {
 }
 
 function extractTimestampColumns(line) {
+  // For CSV format, the line is: logField|enrichedRecord
+  // Parse the enrichedRecord JSON which has the correct CSV column timestamps
+  const pipeIndex = line.indexOf('|');
+  if (pipeIndex > 0 && pipeIndex < line.length - 1) {
+    // This is likely a CSV line with format: logField|enrichedRecord_json
+    const jsonPart = line.substring(pipeIndex + 1);
+    try {
+      const obj = JSON.parse(jsonPart);
+      const atTimestamp = obj["@timestamp"];
+      const timestamp = obj["timestamp"];
+      return {
+        atTimestamp,
+        timestamp
+      };
+    } catch (e) {
+      // If parsing fails, fall through to regular parsing
+    }
+  }
+  
+  // For non-CSV format (regular JSON logs)
   const obj = parseJsonObjectFromLine(line);
   if (!obj) {
     const detected = extractTimestampFromPatterns(line);
