@@ -13,9 +13,12 @@ const exportTxtBtn = document.getElementById("exportTxtBtn");
 const exportJsonBtn = document.getElementById("exportJsonBtn");
 const resultList = document.getElementById("resultList");
 const resultCount = document.getElementById("resultCount");
+const firstPageBtn = document.getElementById("firstPageBtn");
 const prevPageBtn = document.getElementById("prevPageBtn");
 const nextPageBtn = document.getElementById("nextPageBtn");
 const pageInfo = document.getElementById("pageInfo");
+const gotoPageInput = document.getElementById("gotoPageInput");
+const gotoPageBtn = document.getElementById("gotoPageBtn");
 const dropZone = document.getElementById("dropZone");
 
 let allLines = [];
@@ -28,6 +31,7 @@ let currentFileBaseName = "log";
 let selectedLineIndex = null;
 let pendingExpandedScrollIndex = null;
 let dragCounter = 0;
+let isAlreadySortedDesc = false; // Flag for reverse-streamed large files
 let collapsingLineIndex = null;
 let collapseTimerId = null;
 const COLLAPSE_ANIMATION_MS = 220;
@@ -57,21 +61,92 @@ if (dropZone && fileInput) {
 
 function parseCsv(text) {
   const lines = [];
-  const rows = parseSimpleCsv(text);
-  if (!rows.length) return { lines };
-
-  const headers = rows[0];
-  for (let i = 1; i < rows.length; i++) {
-    const row = rows[i];
-    const record = {};
-    for (let j = 0; j < headers.length; j++) {
-      record[headers[j]] = row[j] || "";
+  
+  try {
+    const rows = parseSimpleCsv(text);
+    if (!rows.length) {
+      console.warn('CSV parsing resulted in 0 rows');
+      return { lines };
     }
-    const logField = record.log || record.message || record.content || "";
-    const line = `${logField}|${JSON.stringify(record)}`;
-    lines.push(line);
-  }
 
+    const headers = rows[0].map(h => h.trim());
+    console.log(`CSV headers (${headers.length}):`, headers.slice(0, 5).join(', '));
+    
+    let emptyRowCount = 0;
+    let validRowCount = 0;
+    
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i];
+      
+      // Skip completely empty rows
+      if (!row || row.length === 0) {
+        emptyRowCount++;
+        continue;
+      }
+      
+      // Check if row has any non-empty data
+      const hasData = row.some(cell => cell && cell.trim());
+      if (!hasData) {
+        emptyRowCount++;
+        continue;
+      }
+      
+      const record = {};
+      for (let j = 0; j < headers.length; j++) {
+        record[headers[j]] = row[j] ? row[j].trim() : "";
+      }
+      
+      // Extract the main log content from common field names
+      const logField = record.log || record.message || record.content || "";
+      
+      // Debug first few rows
+      if (validRowCount < 3) {
+        console.log(`Row ${i} - log field length: ${logField.length}, has JSON: ${logField.includes('{')}`);
+      }
+      
+      // Try to extract JSON from the log field
+      let enrichedRecord = { ...record };
+      if (logField) {
+        // Look for JSON object in the log field
+        const jsonStart = logField.indexOf('{');
+        if (jsonStart >= 0) {
+          const jsonPart = logField.substring(jsonStart);
+          try {
+            // Handle escaped quotes in JSON
+            const unescaped = jsonPart.replace(/""/g, '"');
+            const logJson = JSON.parse(unescaped);
+            // Merge log JSON fields into the record for better timestamp/level extraction
+            enrichedRecord = { ...record, ...logJson, _csvRow: record };
+            if (validRowCount === 0) {
+              console.log(`First row JSON parsed successfully, fields:`, Object.keys(logJson).slice(0, 10).join(', '));
+            }
+          } catch (e) {
+            // If parsing fails, try with original
+            try {
+              const logJson = JSON.parse(jsonPart);
+              enrichedRecord = { ...record, ...logJson, _csvRow: record };
+            } catch (e2) {
+              // If still fails, keep original record
+              if (validRowCount === 0) {
+                console.warn(`First row JSON parsing failed:`, e.message, e2.message);
+              }
+            }
+          }
+        }
+      }
+      
+      // Create a searchable line with both the log content and full record
+      const line = `${logField}|${JSON.stringify(enrichedRecord)}`;
+      lines.push(line);
+      validRowCount++;
+    }
+
+    console.log(`CSV parsed: ${validRowCount} valid data rows, ${emptyRowCount} empty rows skipped, ${rows.length - 1} total rows (excluding header)`);
+  } catch (error) {
+    console.error('CSV parsing error:', error);
+    throw error;
+  }
+  
   return { lines };
 }
 
@@ -80,8 +155,21 @@ function parseSimpleCsv(text) {
   let currentRow = [];
   let currentField = "";
   let insideQuotes = false;
+  
+  console.log(`Starting CSV parse of ${(text.length / (1024 * 1024)).toFixed(2)} MB text`);
+  const textLength = text.length;
+  let lastProgressPercent = 0;
 
-  for (let i = 0; i < text.length; i++) {
+  for (let i = 0; i < textLength; i++) {
+    // Progress logging for large files
+    if (textLength > 10000000) { // 10MB+
+      const percent = Math.floor((i / textLength) * 100);
+      if (percent > lastProgressPercent && percent % 10 === 0) {
+        console.log(`CSV parse progress: ${percent}%`);
+        lastProgressPercent = percent;
+      }
+    }
+    
     const char = text[i];
     const nextChar = text[i + 1];
 
@@ -98,9 +186,8 @@ function parseSimpleCsv(text) {
     } else if ((char === "\n" || char === "\r") && !insideQuotes) {
       if (currentField || currentRow.length > 0) {
         currentRow.push(currentField);
-        if (currentRow.some((f) => f.trim())) {
-          rows.push(currentRow);
-        }
+        // Don't filter out rows here - let parseCsv handle it
+        rows.push(currentRow);
         currentRow = [];
         currentField = "";
       }
@@ -110,14 +197,14 @@ function parseSimpleCsv(text) {
     }
   }
 
+  // Don't forget the last row
   if (currentField || currentRow.length > 0) {
     currentRow.push(currentField);
-    if (currentRow.some((f) => f.trim())) {
-      rows.push(currentRow);
-    }
+    rows.push(currentRow);
   }
 
-  return rows.map((row) => row.map((field) => field.trim()));
+  console.log(`CSV parse complete: ${rows.length} total rows found`);
+  return rows;
 }
 
 async function handleFileSelection(event) {
@@ -131,10 +218,61 @@ async function processSelectedFile(file) {
   if (!file) return;
 
   setDropZoneState("loading");
+  
+  console.log('File details:', {
+    name: file.name,
+    size: file.size,
+    type: file.type,
+    lastModified: new Date(file.lastModified).toISOString()
+  });
+  
+  // Display file size info
+  const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+  const sizeInfo = file.size > 1024 * 1024 
+    ? `${fileSizeMB} MB` 
+    : `${(file.size / 1024).toFixed(2)} KB`;
+  
+  // Warn about very large files
+  if (file.size > 200 * 1024 * 1024) { // 200MB+
+    console.warn(`Large file detected: ${fileSizeMB} MB - using streaming reader`);
+    fileMeta.textContent = `Loading large file ${file.name} (${sizeInfo})... Please wait...`;
+  } else if (file.size > 50 * 1024 * 1024) { // 50MB+
+    console.log(`Medium-large file: ${fileSizeMB} MB`);
+    fileMeta.textContent = `Loading ${file.name} (${sizeInfo})...`;
+  } else {
+    fileMeta.textContent = `Loading ${file.name} (${sizeInfo})...`;
+  }
 
   let text = "";
   try {
-    text = await file.text();
+    // For very large files, use FileReader in chunks to avoid memory issues
+    if (file.size > 200 * 1024 * 1024) {
+      console.log('File too large for single-pass reading, using streaming CSV parser...');
+      
+      // Use streaming parser for very large files (reads from end to start for newest-first)
+      const startTime = performance.now();
+      allLines = await parseCSVFileInChunks(file, fileMeta);
+      isAlreadySortedDesc = true; // Data is already sorted newest-first
+      const parseTime = ((performance.now() - startTime) / 1000).toFixed(2);
+      
+      currentFileBaseName = (file.name || "log").replace(/\.[^.]+$/, "") || "log";
+      selectedLineIndex = null;
+      
+      const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+      const sizeDisplay = file.size > 1024 * 1024 
+        ? `${fileSizeMB} MB` 
+        : `${(file.size / 1024).toFixed(2)} KB`;
+      fileMeta.textContent = `${file.name} | ${allLines.length.toLocaleString()} lines | ${sizeDisplay} | Loaded in ${parseTime}s`;
+      setDropZoneState("ready");
+      runSearch();
+      return; // Exit early since we've already processed
+    } else if (file.size > 50 * 1024 * 1024) {
+      // For medium-large files, use FileReader
+      text = await readFileInChunks(file);
+    } else {
+      text = await file.text();
+    }
+    console.log(`File loaded into memory: ${(text.length / (1024 * 1024)).toFixed(2)} MB of text data`);
   } catch (error) {
     fileMeta.textContent = `Cannot read file: ${file.name}`;
     setDropZoneState("error");
@@ -151,15 +289,42 @@ async function processSelectedFile(file) {
 
   try {
     const isCsv = file.name.toLowerCase().endsWith(".csv");
+    const startTime = performance.now();
+    
     if (isCsv) {
+      const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+      const sizeInfo = file.size > 1024 * 1024 
+        ? `${fileSizeMB} MB` 
+        : `${(file.size / 1024).toFixed(2)} KB`;
+      fileMeta.textContent = `Parsing CSV ${file.name} (${sizeInfo})...`;
+      
       const csv = parseCsv(text);
       allLines = csv.lines;
+      isAlreadySortedDesc = false; // Standard parsing, not pre-sorted
+      
+      const parseTime = ((performance.now() - startTime) / 1000).toFixed(2);
+      console.log(`CSV parsed: ${allLines.length} lines from ${file.name} in ${parseTime}s`);
+      if (allLines.length > 0) {
+        console.log(`Sample CSV line:`, allLines[0].substring(0, 200));
+      }
     } else {
       allLines = text.split(/\r?\n/);
+      isAlreadySortedDesc = false; // Standard parsing, not pre-sorted
     }
+    
+    // Clear large text from memory after parsing
+    text = "";
+    
     currentFileBaseName = (file.name || "log").replace(/\.[^.]+$/, "") || "log";
     selectedLineIndex = null;
-    fileMeta.textContent = `${file.name} | ${allLines.length.toLocaleString()} lines`;
+    
+    // Display final stats with size
+    const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+    const sizeDisplay = file.size > 1024 * 1024 
+      ? `${fileSizeMB} MB` 
+      : `${(file.size / 1024).toFixed(2)} KB`;
+    const parseTime = ((performance.now() - startTime) / 1000).toFixed(2);
+    fileMeta.textContent = `${file.name} | ${allLines.length.toLocaleString()} lines | ${sizeDisplay} | Loaded in ${parseTime}s`;
     setDropZoneState("ready");
     runSearch();
   } catch (error) {
@@ -212,6 +377,264 @@ async function onDropZoneDrop(event) {
   await processSelectedFile(file);
 }
 
+// Streaming CSV parser for very large files (processes in chunks from END to START for newest-first)
+async function parseCSVFileInChunks(file, statusElement) {
+  const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB chunks
+  const lines = [];
+  let headers = null;
+  let validRowCount = 0;
+  
+  console.log(`Starting reverse streaming CSV parse of ${(file.size / (1024 * 1024)).toFixed(2)} MB file in ${CHUNK_SIZE / (1024 * 1024)}MB chunks (newest first)`);
+  
+  // Step 1: Read first chunk to get headers
+  const headerChunk = file.slice(0, Math.min(CHUNK_SIZE, file.size));
+  const headerText = await readChunk(headerChunk);
+  const firstNewline = headerText.indexOf('\n');
+  if (firstNewline === -1) {
+    console.error('Could not find header line');
+    return lines;
+  }
+  
+  const headerLine = headerText.substring(0, firstNewline);
+  headers = parseCSVLine(headerLine).map(f => f.trim());
+  console.log(`CSV headers (${headers.length}):`, headers.slice(0, 5).join(', '));
+  
+  // Step 2: Read file from END to START in chunks
+  let offset = file.size;
+  let buffer = ''; // Buffer for incomplete lines at chunk boundaries
+  let processedBytes = 0;
+  
+  while (offset > 0) {
+    // Calculate chunk boundaries
+    const chunkStart = Math.max(0, offset - CHUNK_SIZE);
+    const chunkEnd = offset;
+    
+    const chunk = file.slice(chunkStart, chunkEnd);
+    const chunkText = await readChunk(chunk);
+    
+    // Prepend buffer (incomplete line from previous chunk) to current chunk
+    const fullText = chunkText + buffer;
+    
+    // Find the first complete line (skip partial line at the start of chunk)
+    let startPos = 0;
+    if (chunkStart > 0) {
+      // Not the first chunk, so skip the partial line at the beginning
+      const firstNewlinePos = fullText.indexOf('\n');
+      if (firstNewlinePos !== -1) {
+        startPos = firstNewlinePos + 1;
+      } else {
+        // No complete line in this chunk + buffer, save for next iteration
+        buffer = fullText;
+        offset = chunkStart;
+        processedBytes += chunkEnd - chunkStart;
+        continue;
+      }
+    }
+    
+    // Split into complete lines
+    const textToProcess = fullText.substring(startPos);
+    const chunkLines = textToProcess.split(/\r?\n/);
+    
+    // Save the first line (incomplete at chunk boundary) for next iteration
+    buffer = chunkLines.shift() || '';
+    
+    // Process lines in REVERSE order (since we're reading backwards)
+    // This maintains newest-first ordering
+    for (let i = chunkLines.length - 1; i >= 0; i--) {
+      const csvLine = chunkLines[i];
+      if (!csvLine.trim()) continue;
+      
+      const fields = parseCSVLine(csvLine);
+      if (!fields || fields.length === 0) continue;
+      
+      // Skip header line if we encounter it
+      if (fields[0] === headers[0]) continue;
+      
+      // Build record from fields
+      const record = {};
+      for (let j = 0; j < headers.length; j++) {
+        record[headers[j]] = fields[j] ? fields[j].trim() : '';
+      }
+      
+      // Extract log field
+      const logField = record.log || record.message || record.content || '';
+      
+      // Try to parse JSON from log field
+      let enrichedRecord = { ...record };
+      if (logField) {
+        const jsonStart = logField.indexOf('{');
+        if (jsonStart >= 0) {
+          const jsonPart = logField.substring(jsonStart);
+          try {
+            const unescaped = jsonPart.replace(/""/g, '"');
+            const logJson = JSON.parse(unescaped);
+            enrichedRecord = { ...record, ...logJson, _csvRow: record };
+          } catch {
+            // Keep original record if JSON parse fails
+          }
+        }
+      }
+      
+      const line = `${logField}|${JSON.stringify(enrichedRecord)}`;
+      lines.push(line);
+      validRowCount++;
+    }
+    
+    // Move to previous chunk
+    offset = chunkStart;
+    processedBytes += chunkEnd - chunkStart;
+    
+    // Update progress
+    const progress = Math.min(100, Math.floor((processedBytes / file.size) * 100));
+    if (progress % 10 === 0 || offset === 0) {
+      console.log(`Reverse streaming progress: ${progress}% (${validRowCount.toLocaleString()} rows)`);
+      if (statusElement) {
+        statusElement.textContent = `Parsing ${file.name} (newest first)... ${progress}% (${validRowCount.toLocaleString()} rows)`;
+      }
+    }
+  }
+  
+  // Process any remaining buffer (the very first line after headers)
+  if (buffer.trim() && buffer !== headerLine) {
+    const fields = parseCSVLine(buffer);
+    if (fields && fields.length > 0 && fields[0] !== headers[0]) {
+      const record = {};
+      for (let i = 0; i < headers.length; i++) {
+        record[headers[i]] = fields[i] ? fields[i].trim() : '';
+      }
+      const logField = record.log || record.message || record.content || '';
+      let enrichedRecord = { ...record };
+      if (logField) {
+        const jsonStart = logField.indexOf('{');
+        if (jsonStart >= 0) {
+          try {
+            const logJson = JSON.parse(logField.substring(jsonStart).replace(/""/g, '"'));
+            enrichedRecord = { ...record, ...logJson, _csvRow: record };
+          } catch {}
+        }
+      }
+      lines.push(`${logField}|${JSON.stringify(enrichedRecord)}`);
+      validRowCount++;
+    }
+  }
+  
+  console.log(`Reverse streaming CSV parse complete: ${validRowCount.toLocaleString()} valid data rows (newest first, no sorting needed)`);
+  return lines;
+}
+
+// Read a single chunk as text
+async function readChunk(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => resolve(e.target.result || '');
+    reader.onerror = (e) => reject(new Error('Chunk read failed'));
+    reader.readAsText(blob);
+  });
+}
+
+// Parse a single CSV line handling quotes
+function parseCSVLine(line) {
+  const fields = [];
+  let currentField = '';
+  let insideQuotes = false;
+  
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    const nextChar = line[i + 1];
+    
+    if (char === '"') {
+      if (insideQuotes && nextChar === '"') {
+        currentField += '"';
+        i++;
+      } else {
+        insideQuotes = !insideQuotes;
+      }
+    } else if (char === ',' && !insideQuotes) {
+      fields.push(currentField);
+      currentField = '';
+    } else {
+      currentField += char;
+    }
+  }
+  
+  fields.push(currentField);
+  return fields;
+}
+
+// Read a sample from the file to verify it's readable
+async function readFileSample(file, sampleSize) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    const blob = file.slice(0, sampleSize);
+    
+    reader.onload = (e) => {
+      resolve(e.target.result || '');
+    };
+    
+    reader.onerror = (e) => {
+      console.error('Sample read error:', e);
+      reject(new Error('Failed to read file sample'));
+    };
+    
+    reader.readAsText(blob);
+  });
+}
+
+// Chunked file reader for very large files
+async function readFileInChunks(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    
+    reader.onload = (e) => {
+      const result = e.target.result;
+      console.log(`FileReader result type:`, typeof result);
+      console.log(`FileReader result:`, result ? `${(result.length / (1024 * 1024)).toFixed(2)} MB` : 'null/empty');
+      
+      if (!result || result.length === 0) {
+        console.error('FileReader returned empty result despite file size:', file.size);
+        reject(new Error(`File read failed - empty result from ${(file.size / (1024 * 1024)).toFixed(2)} MB file`));
+        return;
+      }
+      
+      const text = result;
+      console.log(`File read complete: ${(text.length / (1024 * 1024)).toFixed(2)} MB`);
+      resolve(text);
+    };
+    
+    reader.onerror = (e) => {
+      console.error('FileReader error:', e);
+      console.error('FileReader error details:', reader.error);
+      reject(new Error(`Failed to read file: ${reader.error?.message || 'Unknown error'}`));
+    };
+    
+    reader.onabort = (e) => {
+      console.error('FileReader aborted:', e);
+      reject(new Error('File read was aborted'));
+    };
+    
+    reader.onloadstart = (e) => {
+      console.log('FileReader started, file size:', (file.size / (1024 * 1024)).toFixed(2), 'MB');
+    };
+    
+    reader.onloadend = (e) => {
+      console.log('FileReader ended, readyState:', reader.readyState, 'result length:', reader.result?.length || 0);
+    };
+    
+    reader.onprogress = (e) => {
+      if (e.lengthComputable) {
+        const percent = Math.floor((e.loaded / e.total) * 100);
+        if (percent % 10 === 0) {
+          console.log(`File read progress: ${percent}%`);
+          fileMeta.textContent = `Reading ${file.name}... ${percent}%`;
+        }
+      }
+    };
+    
+    // Read as text
+    reader.readAsText(file);
+  });
+}
+
 function setDropZoneState(state) {
   if (!dropZone) return;
 
@@ -250,6 +673,12 @@ clearBtn.addEventListener("click", () => {
 exportTxtBtn.addEventListener("click", () => exportMatches("txt"));
 exportJsonBtn.addEventListener("click", () => exportMatches("json"));
 
+firstPageBtn.addEventListener("click", () => {
+  if (currentPage <= 1) return;
+  currentPage = 1;
+  renderCurrentPage();
+});
+
 prevPageBtn.addEventListener("click", () => {
   if (currentPage <= 1) return;
   currentPage -= 1;
@@ -261,6 +690,23 @@ nextPageBtn.addEventListener("click", () => {
   if (currentPage >= totalPages) return;
   currentPage += 1;
   renderCurrentPage();
+});
+
+gotoPageBtn.addEventListener("click", () => {
+  const totalPages = getTotalPages();
+  const targetPage = Number.parseInt(gotoPageInput.value, 10);
+  if (isNaN(targetPage) || targetPage < 1 || targetPage > totalPages) {
+    gotoPageInput.value = currentPage;
+    return;
+  }
+  currentPage = targetPage;
+  renderCurrentPage();
+});
+
+gotoPageInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    gotoPageBtn.click();
+  }
 });
 
 pageSize.addEventListener("change", () => {
@@ -332,15 +778,38 @@ function runSearch() {
     }
   }
 
-  const matches = allLines
+  let matches = allLines
     .map((line, index) => ({ line, index }))
     .filter(({ line }) => {
-      if (!linePassesTimeFilter(line, fromMs, toMs)) return false;
-      if (!linePassesLevelFilter(line, selectedLevel)) return false;
-      if (!hasQuery) return true;
-      return isMatch(line, query, mode, regex);
+      const passesTime = linePassesTimeFilter(line, fromMs, toMs);
+      const passesLevel = linePassesLevelFilter(line, selectedLevel);
+      const passesQuery = !hasQuery || isMatch(line, query, mode, regex);
+      
+      if (!passesTime || !passesLevel || !passesQuery) {
+        if (index === 0) {
+          console.log(`First line filter: time=${passesTime}, level=${passesLevel}, query=${passesQuery}`);
+        }
+      }
+      
+      return passesTime && passesLevel && passesQuery;
     });
+  
+  // Sort by datetime descending (newest first) - skip if already sorted from reverse streaming
+  if (!isAlreadySortedDesc) {
+    matches = matches.sort((a, b) => {
+      const timeA = extractTimestamp(a.line);
+      const timeB = extractTimestamp(b.line);
+      
+      // Handle null timestamps (lines without parseable datetime)
+      if (timeA === null && timeB === null) return 0;
+      if (timeA === null) return 1; // Put nulls at the end
+      if (timeB === null) return -1; // Put nulls at the end
+      
+      return timeB - timeA; // Descending order (newest first)
+    });
+  }
 
+  console.log(`Search complete: ${matches.length} matches from ${allLines.length} total lines (query: "${raw}", fromMs: ${fromMs}, toMs: ${toMs}, level: ${selectedLevel})${isAlreadySortedDesc ? ' [pre-sorted]' : ' [sorted desc]'}`);
   matchedItems = matches;
   currentQuery = query;
   currentMode = mode;
@@ -622,8 +1091,11 @@ function scrollExpandedRowIntoView(rowIndex) {
 
 function updatePaginationUi(totalPages) {
   pageInfo.textContent = `Page ${currentPage} / ${totalPages}`;
+  firstPageBtn.disabled = currentPage <= 1;
   prevPageBtn.disabled = currentPage <= 1;
   nextPageBtn.disabled = currentPage >= totalPages;
+  gotoPageInput.value = currentPage;
+  gotoPageInput.max = totalPages;
 }
 
 function getPageSizeValue() {
